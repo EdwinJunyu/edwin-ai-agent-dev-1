@@ -34,7 +34,7 @@ public class MyLoggerAdvisor implements CallAdvisor, StreamAdvisor {
 
 		ChatClientResponse chatClientResponse = callAdvisorChain.nextCall(chatClientRequest);
 
-		logResponse(chatClientResponse); //在这里打断点调试
+  		logResponse(chatClientResponse); //在这里打断点调试
 
 		return chatClientResponse;
 	}

@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: edwin_ai_agent_imageSearchMCPServer
+  profiles:
+    active: stdio
+server:
+  port: 8127

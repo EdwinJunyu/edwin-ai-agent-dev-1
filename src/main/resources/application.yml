@@ -3,6 +3,12 @@ spring:
     name: edwin_ai_agent
   profiles:
     active: local
+  ai:
+    mcp:
+      client:
+        stdio: #这个只包含了std模式，另外的sse模式没有设置
+          servers-configuration: classpath:mcp-servers.json
+
 server:
   port: 8123
   servlet:

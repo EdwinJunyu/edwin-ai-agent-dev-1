@@ -1,0 +1,9 @@
+spring:
+  ai:
+    mcp:
+      server:
+        name: edwin_ai_agent_imageSearchMCPServer
+        version: 0.0.1
+        type: SYNC
+        # sse
+        stdio: false
