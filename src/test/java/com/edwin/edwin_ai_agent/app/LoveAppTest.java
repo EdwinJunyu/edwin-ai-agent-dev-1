@@ -78,7 +78,7 @@ class LoveAppTest {
     void doChatWithMcp(){
         String chatId = UUID.randomUUID().toString();
         //测试图片搜索MCP
-        String message = "有关东京旅行的图片";
+        String message = "有关东京旅行的图片，并介绍每张照片";
         String answer = loveApp.doChatWithMcp(message,chatId);
         Assertions.assertNotNull(answer);
     }

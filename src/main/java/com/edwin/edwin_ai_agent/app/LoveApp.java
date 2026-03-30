@@ -18,6 +18,8 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Component;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
+import reactor.core.publisher.Flux;
+
 import java.util.List;
 
 //@Component
@@ -178,5 +180,16 @@ public class LoveApp{
         log.info("content: {}", content);
         return content;
     }
+    // AI 基础对话 SSE 流式传输
+    public Flux<String> doChatByStream(String message, String chatId) {
+        return chatClient
+                .prompt()
+                .user(message)
+                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId)
+                        .param(VectorStoreChatMemoryAdvisor.TOP_K, 10))
+                .stream()
+                .content();
+    }
+
 
 }
