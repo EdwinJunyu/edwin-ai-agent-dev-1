@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { createSessionId } from '../utils/id';
 import { openChatStream } from '../services/chat';
@@ -58,6 +58,10 @@ const messages = ref([]);
 const messageViewport = ref(null);
 const streamRef = ref(null);
 const chatId = ref('');
+const autoScrollEnabled = ref(true);
+let typingChain = Promise.resolve();
+const TYPING_BATCH_DELAY = 96;
+const SCROLL_BOTTOM_THRESHOLD = 48;
 
 const themeClass = computed(() => `theme-${props.theme}`);
 
@@ -79,10 +83,28 @@ const closeStream = () => {
   isStreaming.value = false;
 };
 
-const scrollToBottom = async () => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getTypingBatchSize = () => (Math.random() < 0.5 ? 3 : 4);
+
+const handleMessageScroll = () => {
+  if (!messageViewport.value) {
+    return;
+  }
+
+  const { scrollTop, scrollHeight, clientHeight } = messageViewport.value;
+  const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
+  autoScrollEnabled.value = distanceToBottom <= SCROLL_BOTTOM_THRESHOLD;
+};
+
+const scrollToBottom = async (force = false) => {
   await nextTick();
 
   if (!messageViewport.value) {
+    return;
+  }
+
+  if (!force && !autoScrollEnabled.value) {
     return;
   }
 
@@ -95,13 +117,16 @@ const formatTime = (timestamp) =>
     minute: '2-digit',
   }).format(timestamp);
 
-const pushMessage = (role, content = '') => {
-  const message = {
+const pushMessage = (role, content = '', extra = {}) => {
+  const message = reactive({
     id: createSessionId(role),
     role,
     content,
     timestamp: Date.now(),
-  };
+    kind: extra.kind || 'plain',
+    title: extra.title || (role === 'user' ? '用户' : '智能助手'),
+    step: extra.step ?? null,
+  });
 
   messages.value.push(message);
   return message;
@@ -109,6 +134,8 @@ const pushMessage = (role, content = '') => {
 
 const startNewConversation = () => {
   closeStream();
+  autoScrollEnabled.value = true;
+  typingChain = Promise.resolve();
   messages.value = [];
   draft.value = '';
   resetChatId();
@@ -132,6 +159,53 @@ const normalizeChunk = (chunk) => {
   return chunk ?? '';
 };
 
+const parseStructuredPayload = (raw) => {
+  const normalized = normalizeChunk(raw);
+
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(normalized);
+    const payloadList = Array.isArray(parsed) ? parsed : [parsed];
+    const structuredItems = payloadList
+      .filter(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          typeof item.kind === 'string' &&
+          typeof item.content === 'string',
+      )
+      .map((item) => ({
+        kind: item.kind,
+        title: item.title || '智能助手',
+        content: item.content,
+        step: item.step ?? null,
+      }));
+
+    return structuredItems.length > 0 ? structuredItems : null;
+  } catch {
+    return null;
+  }
+};
+
+const appendWithTyping = async (targetMessage, text) => {
+  const chars = Array.from(text);
+  let cursor = 0;
+
+  while (cursor < chars.length) {
+    const batchSize = Math.min(getTypingBatchSize(), chars.length - cursor);
+    targetMessage.content += chars.slice(cursor, cursor + batchSize).join('');
+    cursor += batchSize;
+    await scrollToBottom();
+
+    if (cursor < chars.length) {
+      await sleep(TYPING_BATCH_DELAY);
+    }
+  }
+};
+
 const submitMessage = async () => {
   const message = draft.value.trim();
 
@@ -142,10 +216,15 @@ const submitMessage = async () => {
   draft.value = '';
   pushMessage('user', message);
 
-  const assistantMessage = pushMessage('assistant', '');
-  await scrollToBottom();
+  const loadingMessage = pushMessage('assistant', '', {
+    kind: 'loading',
+    title: '智能助手',
+  });
+  autoScrollEnabled.value = true;
+  await scrollToBottom(true);
 
   isStreaming.value = true;
+  typingChain = Promise.resolve();
 
   const eventSource = openChatStream({
     path: props.endpointPath,
@@ -155,15 +234,64 @@ const submitMessage = async () => {
 
   streamRef.value = eventSource;
   let hasReceivedChunk = false;
+  let streamMode = null;
+  let hasStructuredBubble = false;
 
-  eventSource.onmessage = async (event) => {
+  eventSource.onmessage = (event) => {
+    const structuredItems = parseStructuredPayload(event.data);
+
+    if (structuredItems) {
+      hasReceivedChunk = true;
+      streamMode = 'structured';
+
+      typingChain = typingChain.then(async () => {
+        for (const item of structuredItems) {
+          const targetMessage = !hasStructuredBubble
+            ? Object.assign(loadingMessage, {
+                kind: item.kind,
+                title: item.title,
+                step: item.step,
+                content: '',
+                timestamp: Date.now(),
+              })
+            : pushMessage('assistant', '', {
+                kind: item.kind,
+                title: item.title,
+                step: item.step,
+              });
+
+          hasStructuredBubble = true;
+          await appendWithTyping(targetMessage, item.content);
+        }
+      });
+      return;
+    }
+
+    const chunk = normalizeChunk(event.data);
+    if (!chunk) {
+      return;
+    }
+
     hasReceivedChunk = true;
-    assistantMessage.content += normalizeChunk(event.data);
-    await scrollToBottom();
+
+    if (!streamMode) {
+      streamMode = 'plain';
+      Object.assign(loadingMessage, {
+        kind: 'plain',
+        title: '智能助手',
+        step: null,
+        content: '',
+        timestamp: Date.now(),
+      });
+    }
+
+    typingChain = typingChain.then(() => appendWithTyping(loadingMessage, chunk));
   };
 
   eventSource.onerror = async () => {
-    const hasContent = assistantMessage.content.trim().length > 0 || hasReceivedChunk;
+    await typingChain;
+
+    const hasContent = loadingMessage.content.trim().length > 0 || hasReceivedChunk;
     const isClosed = eventSource.readyState === EventSource.CLOSED;
 
     if (isClosed && hasReceivedChunk) {
@@ -173,8 +301,13 @@ const submitMessage = async () => {
     }
 
     if (!hasContent) {
-      assistantMessage.content =
-        '无法连接到后端服务，请确认 127.0.0.1:8124 已启动，并且 /api 接口可访问。';
+      Object.assign(loadingMessage, {
+        kind: 'error',
+        title: '智能助手',
+        step: null,
+        content: '无法连接到后端服务',
+        timestamp: Date.now(),
+      });
     }
 
     closeStream();
@@ -226,7 +359,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main ref="messageViewport" class="message-board">
+      <main ref="messageViewport" class="message-board" @scroll="handleMessageScroll">
         <section v-if="messages.length === 0" class="empty-state">
           <span class="empty-label">Ready to Chat</span>
           <h2>{{ emptyTitle }}</h2>
@@ -249,7 +382,7 @@ onBeforeUnmount(() => {
           v-for="message in messages"
           :key="message.id"
           class="message-row"
-          :class="message.role"
+          :class="[message.role, `kind-${message.kind}`]"
         >
           <div class="avatar">
             {{ message.role === 'user' ? '我' : 'AI' }}
@@ -257,10 +390,18 @@ onBeforeUnmount(() => {
 
           <div class="bubble">
             <div class="bubble-meta">
-              <strong>{{ message.role === 'user' ? '用户' : '智能助手' }}</strong>
+              <div class="meta-main">
+                <strong>{{ message.title }}</strong>
+                <span v-if="message.step !== null" class="bubble-step">Step {{ message.step }}</span>
+              </div>
               <span>{{ formatTime(message.timestamp) }}</span>
             </div>
-            <p>{{ message.content || '正在生成中...' }}</p>
+            <p v-if="message.content">{{ message.content }}</p>
+            <div v-else-if="message.kind === 'loading'" class="typing-indicator" aria-label="生成中">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
           </div>
         </article>
       </main>
@@ -278,7 +419,7 @@ onBeforeUnmount(() => {
 
           <div class="composer-footer">
             <div class="status-text">
-              {{ isStreaming ? 'SSE 正在推送回复，请稍候...' : 'Enter 发送，Shift + Enter 换行' }}
+              {{ isStreaming ? '正在推送消息 请稍候' : 'Enter 发送，Shift + Enter 换行' }}
             </div>
 
             <button
@@ -596,6 +737,13 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
+.meta-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .bubble-meta strong {
   color: #1d2941;
   font-size: 0.94rem;
@@ -611,6 +759,78 @@ onBeforeUnmount(() => {
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.bubble-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(29, 41, 65, 0.08);
+  color: #55637d;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.message-row.assistant.kind-thought .bubble {
+  border-left: 4px solid #8fb6ff;
+}
+
+.message-row.assistant.kind-final .bubble {
+  border-left: 4px solid #3aa37c;
+  background: linear-gradient(180deg, #ffffff 0%, #f5fffb 100%);
+}
+
+.message-row.assistant.kind-final .avatar {
+  background: linear-gradient(135deg, #157f69 0%, #48b99a 100%);
+}
+
+.message-row.assistant.kind-error .bubble {
+  border-left: 4px solid #d95c5c;
+  background: linear-gradient(180deg, #ffffff 0%, #fff5f5 100%);
+}
+
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.typing-indicator span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9aa8c0;
+  opacity: 0.36;
+  animation: typingPulse 1.1s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.message-row.user .typing-indicator span {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+@keyframes typingPulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.3;
+  }
+
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
 }
 
 .composer-card {
