@@ -1,5 +1,6 @@
 package com.edwin.edwin_ai_agent.controller;
 
+import com.edwin.edwin_ai_agent.agent.EdwinManus;
 import com.edwin.edwin_ai_agent.app.LoveApp;
 import jakarta.annotation.Resource;
 import org.springframework.ai.chat.model.ChatModel;
@@ -53,6 +54,18 @@ public class AiController {
                 );
         // 返回emitter
         return emitter;
+    }
+
+    /**
+     * 流式调用 Manus 超级智能体
+     *
+     * @param message
+     * @return
+     */
+    @GetMapping("/manus/chat")
+    public SseEmitter doChatWithManus(String message) {
+        EdwinManus edwinManus = new EdwinManus(allTools, dashscopeChatModel);
+        return edwinManus.runStream(message);
     }
 
 
