@@ -148,7 +148,7 @@ public class PDFGenerationTool {
         String regularFontPath = Paths.get("src/main/resources/static/fonts/SourceHanSansCN-Regular.otf")
                 .toAbsolutePath()
                 .toString();
-        String boldFontPath = Paths.get("src/main/resources/static/fonts/SourceHanSansCN-Bold.otf")
+        String boldFontPath = Paths.get("src/main/resources/static/fonts/SourceHanSansCN-Bold.ttf")
                 .toAbsolutePath()
                 .toString();
 
