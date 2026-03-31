@@ -9,13 +9,14 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ToolRegistration {
 
-    @Value("${search-api.api-key}")
-    private String searchApiKey;
+
+    @Value("${tavily.api-key}")
+    private String tavilyApiKey;
 
     @Bean
     public ToolCallback[] allTools() {
         FileOperationTool fileOperationTool = new FileOperationTool();
-        WebSearchTool webSearchTool = new WebSearchTool(searchApiKey);
+        WebSearchTool webSearchTool = new WebSearchTool(tavilyApiKey);
         WebScrapingTool webScrapingTool = new WebScrapingTool();
         ResourceDownloadTool resourceDownloadTool = new ResourceDownloadTool();
         TerminalOperationTool terminalOperationTool = new TerminalOperationTool();
@@ -32,4 +33,3 @@ public class ToolRegistration {
         );
     }
 }
-

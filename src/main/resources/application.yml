@@ -27,6 +27,10 @@ knife4j:
   setting:
     language: zh_cn
 
-# searchApi
-search-api:
-  api-key: 你的 API Key
+# # searchApi
+# search-api:
+#   api-key: 菴逧・API Key
+#NEW CODE#
+# tavily
+tavily:
+  api-key: YOUR_TAVILY_API_KEY
