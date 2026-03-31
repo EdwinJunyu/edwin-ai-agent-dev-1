@@ -1,18 +1,19 @@
 <script setup>
 const appCards = [
   {
-    title: 'AI 旅行计划大师',
-    route: '/love-app',
+    title: 'Edwin App',
+    route: '/edwin-app',
     tag: 'SSE Chat',
-    summary: '面向旅行规划场景的对话式应用，进入页面自动生成聊天室 ID，并通过 Love App 流式返回旅行建议。',
-    highlights: ['自动生成 chatId', '流式展示 AI 回复', '聊天室风格界面'],
+    // The frontend route is renamed, while the backend SSE endpoint remains compatible.
+    summary: '综合AI聊天室。',
+    highlights: ['自动生成 chatId', 'SSE 流式对话', '后端接口兼容'],
   },
   {
-    title: 'AI 超级智能体',
+    title: 'Manus Agent',
     route: '/manus',
-    tag: 'Manus Agent',
-    summary: '超级智能体对话页面，延续同款聊天工作区体验，通过 Manus 接口实时展示推理和生成过程。',
-    highlights: ['SSE 实时输出', '统一交互体验', '便于拓展多智能体能力'],
+    tag: 'Agent Workflow',
+    summary: '多步骤任务拆解与流式执行入口，适合需要持续观察执行过程的 Agent 场景。',
+    highlights: ['SSE 实时输出', '任务过程可见', '多阶段回复'],
   },
 ];
 </script>
@@ -23,10 +24,10 @@ const appCards = [
     <div class="ambient ambient-right"></div>
 
     <section class="hero-card">
-      <span class="eyebrow">Vue3 + Axios + SSE</span>
-      <h1>Edwin AI 应用中心</h1>
+      <span class="eyebrow">Vue 3 + Axios + SSE</span>
+      <h1>Edwin AI Agent</h1>
       <p class="hero-copy">
-        一个用于切换不同 AI 能力的前端工作台。首页负责应用导航，两个业务页统一采用聊天式布局，让用户可以直接进入对话与流式交互。
+        这里集中展示当前可用的 AI 应用入口
       </p>
 
       <div class="tech-pills">
@@ -46,7 +47,7 @@ const appCards = [
       >
         <div class="card-topline">
           <span class="card-tag">{{ card.tag }}</span>
-          <span class="card-action">进入应用</span>
+          <span class="card-action">打开应用</span>
         </div>
 
         <h2>{{ card.title }}</h2>

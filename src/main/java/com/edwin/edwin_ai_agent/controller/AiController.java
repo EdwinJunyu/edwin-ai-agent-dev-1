@@ -28,19 +28,14 @@ public class AiController {
     @Resource
     private ChatModel dashscopeChatModel;
 
-    @GetMapping("/love_app/chat/sync")
+    @GetMapping("/edwin_app/chat/sync")
     public String doChatWithLoveAppSync(String message, String chatId) {
-        // return loveApp.doChat(message, chatId);
-        // #NEW CODE#
         return edwinApp.doChat(message, chatId);
     }
 
-    @GetMapping("/love_app/chat/sse/emitter")
+    @GetMapping("/edwin_app/chat/sse/emitter")
     public SseEmitter doChatWithLoveAppSseEmitter(String message, String chatId) {
         SseEmitter emitter = new SseEmitter(180000L);
-        // Delegate to the renamed bean while keeping the original endpoint stable.
-        // loveApp.doChatByStream(message, chatId)
-        // #NEW CODE#
         edwinApp.doChatByStream(message, chatId)
                 .subscribe(
                         chunk -> {
