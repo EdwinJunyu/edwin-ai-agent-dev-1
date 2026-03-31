@@ -10,7 +10,7 @@ spring:
           servers-configuration: classpath:mcp-servers.json
 
 server:
-  port: 8124
+  port: 8125
   servlet:
     context-path: /api
 
