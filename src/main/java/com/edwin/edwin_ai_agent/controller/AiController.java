@@ -1,25 +1,26 @@
 package com.edwin.edwin_ai_agent.controller;
 
 import com.edwin.edwin_ai_agent.agent.EdwinManus;
-import com.edwin.edwin_ai_agent.app.LoveApp;
+// import com.edwin.edwin_ai_agent.app.LoveApp;
+// #NEW CODE#
+import com.edwin.edwin_ai_agent.app.EdwinApp;
 import jakarta.annotation.Resource;
+import java.io.IOException;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import reactor.core.publisher.Flux;
-
-import java.io.IOException;
 
 @RestController
 @RequestMapping("/ai")
 public class AiController {
 
     @Resource
-    private LoveApp loveApp;
+    // private LoveApp loveApp;
+    // #NEW CODE#
+    private EdwinApp edwinApp;
 
     @Resource
     private ToolCallback[] allTools;
@@ -29,17 +30,19 @@ public class AiController {
 
     @GetMapping("/love_app/chat/sync")
     public String doChatWithLoveAppSync(String message, String chatId) {
-        return loveApp.doChat(message, chatId);
+        // return loveApp.doChat(message, chatId);
+        // #NEW CODE#
+        return edwinApp.doChat(message, chatId);
     }
 
     @GetMapping("/love_app/chat/sse/emitter")
     public SseEmitter doChatWithLoveAppSseEmitter(String message, String chatId) {
-        // 创建一个超时时间较长的 SseEmitter
-        SseEmitter emitter = new SseEmitter(180000L); // 3分钟超时
-        // 获取 Flux 数据流并直接订阅
-        loveApp.doChatByStream(message, chatId)
+        SseEmitter emitter = new SseEmitter(180000L);
+        // Delegate to the renamed bean while keeping the original endpoint stable.
+        // loveApp.doChatByStream(message, chatId)
+        // #NEW CODE#
+        edwinApp.doChatByStream(message, chatId)
                 .subscribe(
-                        // 处理每条消息
                         chunk -> {
                             try {
                                 emitter.send(chunk);
@@ -47,27 +50,14 @@ public class AiController {
                                 emitter.completeWithError(e);
                             }
                         },
-                        // 处理错误
                         emitter::completeWithError,
-                        // 处理完成
-                        emitter::complete
-                );
-        // 返回emitter
+                        emitter::complete);
         return emitter;
     }
 
-    /**
-     * 流式调用 Manus 超级智能体
-     *
-     * @param message
-     * @return
-     */
     @GetMapping("/manus/chat")
     public SseEmitter doChatWithManus(String message) {
         EdwinManus edwinManus = new EdwinManus(allTools, dashscopeChatModel);
         return edwinManus.runStream(message);
     }
-
-
 }
-
