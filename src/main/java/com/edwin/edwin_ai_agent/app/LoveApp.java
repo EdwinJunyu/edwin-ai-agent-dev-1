@@ -21,45 +21,6 @@ import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvi
 import reactor.core.publisher.Flux;
 
 import java.util.List;
-
-//@Component
-//@Slf4j
-//public class LoveApp {
-    //private final ChatClient chatClient;
-
-    //private static final String SYSTEM_PROMPT = "扮演聊天大师，不是话痨，适当倾听";
-    //private static final Logger log = LoggerFactory.getLogger(LoveApp.class); //写了这一行后注释掉了 @Slf4j
-    //初始化 chatClient (讲解中的代码部分已弃用)
-    //public LoveApp(ChatModel dashscopeChatModel){
-        //初始化基于内存的对话记忆
-        //ChatMemory chatMemory = new InMemoryChatMemory(); 方法已弃用，改使用ChatMemoryRepository
-        // 1) 创建一个 ChatMemoryRepository（存储层），这里用内存实现：重启程序后记录会丢失，适合开发/测试
-        //ChatMemoryRepository chatMemoryRepository = new InMemoryChatMemoryRepository();
-        // 2) 创建一个 ChatMemory（记忆策略层），使用 MessageWindowChatMemory：只保留“最近 maxMessages 条消息”
-        //ChatMemory chatMemory = MessageWindowChatMemory.builder()
-                // 3) 把上面的 repository 注入进去：MessageWindowChatMemory 会用它来“存/取”不同 conversationId 的历史消息
-                //.chatMemoryRepository(chatMemoryRepository)
-                // 4) 设置最多保留 20 条历史消息（超出会自动丢弃更早的），避免上下文越来越长导致 token 变贵/变慢
-                //.maxMessages(20)
-                // 5) build()：构建出最终可用的 ChatMemory 实例
-                //.build();
-
-        // 6) 构建 ChatClient：用 dashscopeChatModel 作为底层模型（大模型 provider）
-        //chatClient = ChatClient.builder(dashscopeChatModel)
-                // 7) 设置默认的 system prompt：每次对话都会自动带上这段“系统指令”
-                //.defaultSystem(SYSTEM_PROMPT)
-                // 8) 设置默认 Advisors（拦截器/增强器）：MessageChatMemoryAdvisor 会在每次请求前自动注入历史消息，形成“带记忆的对话”
-                //.defaultAdvisors(
-                        //new MyLoggerAdvisor(), //自定义日志
-                        //MessageChatMemoryAdvisor.builder(chatMemory).build())
-                //设置 ReReadingAdvisor
-                //        new ReReadingAdvisor().withOrder(0),
-                //        MessageChatMemoryAdvisor.builder(chatMemory).build()
-                //)
-                // 9) build()：构建最终可调用的 chatClient
-                //.build();
-    //}
-
 @Component
 public class LoveApp{
         private final ChatClient chatClient;
@@ -109,7 +70,7 @@ public class LoveApp{
         return loveReport;
     }
 
-    //AI 恋爱知识库问答功能
+    //AI 知识库问答功能
     @Resource
     private VectorStore loveAppVectorStore;
     @Resource
@@ -147,7 +108,7 @@ public class LoveApp{
     //AI 调用工具能力
     @Resource
     private ToolCallback[] allTools;
-    //AI 恋爱报告功能（支持调用工具）
+    //AI 报告功能（支持调用工具）
     public LoveReport doChatWithTools(String message, String chatId){
         LoveReport loveReport = chatClient
                 .prompt()
@@ -190,6 +151,4 @@ public class LoveApp{
                 .stream()
                 .content();
     }
-
-
 }

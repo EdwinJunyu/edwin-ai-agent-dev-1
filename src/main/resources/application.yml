@@ -1,13 +1,8 @@
 spring:
   application:
-    name: edwin_ai_agent
+    name: edwin_ai_agent_v2
   profiles:
     active: local
-  ai:
-    mcp:
-      client:
-        stdio: #这个只包含了std模式，另外的sse模式没有设置
-          servers-configuration: classpath:mcp-servers.json
 
 server:
   port: 8125
@@ -25,7 +20,7 @@ springdoc:
   group-configs:
     - group: 'default'
       paths-to-match: '/**'
-      packages-to-scan: com.edwin.edwin_ai_agent.controller
+      packages-to-scan: com.edwin.edwin_ai_agent_v2.controller
 # knife4j???????????????
 knife4j:
   enable: true
