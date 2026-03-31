@@ -5,6 +5,8 @@ import com.edwin.edwin_ai_agent.chatmemory.FileBaseChatMemory;
 import com.edwin.edwin_ai_agent.rag.QueryRewriter;
 import jakarta.annotation.Resource;
 import java.util.List;
+
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -22,15 +24,14 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
 @Component
-// public class LoveApp {
-// #NEW CODE#
+@Slf4j
 public class EdwinApp {
 
     private final ChatClient chatClient;
     private static final String SYSTEM_PROMPT = "扮演聊天大师，回答语言精简，适当倾听";
     // private static final Logger log = LoggerFactory.getLogger(LoveApp.class);
     // #NEW CODE#
-    private static final Logger log = LoggerFactory.getLogger(EdwinApp.class);
+    //private static final Logger log = LoggerFactory.getLogger(EdwinApp.class);
 
     @Resource
     private VectorStore loveAppVectorStore;
