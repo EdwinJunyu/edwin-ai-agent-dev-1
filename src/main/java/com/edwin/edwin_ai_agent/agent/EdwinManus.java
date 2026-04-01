@@ -1,3 +1,5 @@
+/* Previous implementation commented out per workspace rule. */
+// #NEW CODE#
 package com.edwin.edwin_ai_agent.agent;
 
 import com.edwin.edwin_ai_agent.advisor.MyLoggerAdvisor;
@@ -9,27 +11,31 @@ import org.springframework.stereotype.Component;
 @Component
 public class EdwinManus extends ToolCallAgent {
 
+    private static final String SYSTEM_PROMPT = """
+            You are EdwinManus, an all-capable AI assistant focused on finishing the user's task with the minimum necessary steps.
+            You can use tools, but every tool call must materially improve the answer or artifact you are producing.
+            """;
+
+    private static final String NEXT_STEP_PROMPT = """
+            Choose the minimum tool usage needed to finish the request.
+            Only continue to another step when there is a clear missing fact or missing artifact.
+            Do not repeat the same tool with the same arguments.
+            For searchWeb, use at most two searches in one request, and the second search must be materially refined.
+            If the current evidence is enough, answer directly and call the `terminate` tool.
+            Unless the user explicitly asks, do not proactively suggest extra next steps.
+            """;
+
     public EdwinManus(ToolCallback[] allTools, ChatModel dashscopeChatModel) {
         super(allTools);
         this.setName("EdwinManus");
-        String SYSTEM_PROMPT = """  
-                You are EdwinManus, an all-capable AI assistant, aimed at solving any task presented by the user.  
-                You have various tools at your disposal that you can call upon to efficiently complete complex requests.  
-                """;
         this.setSystemPrompt(SYSTEM_PROMPT);
-        String NEXT_STEP_PROMPT = """  
-                Based on user needs, proactively select the most appropriate tool or combination of tools.  
-                For complex tasks, you can break down the problem and use different tools step by step to solve it.  
-                After using each tool, clearly explain the execution results and suggest the next steps.  
-                If you want to stop the interaction at any point, use the `terminate` tool/function call.  
-                """;
         this.setNextStepPrompt(NEXT_STEP_PROMPT);
-        this.setMaxSteps(20);
-        // 初始化客户端
+        this.setMaxSteps(8);
+
+        // Keep the existing advisor chain so request/response logging behavior does not change.
         ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
                 .defaultAdvisors(new MyLoggerAdvisor())
                 .build();
         this.setChatClient(chatClient);
     }
 }
-
