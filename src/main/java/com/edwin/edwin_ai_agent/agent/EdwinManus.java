@@ -16,11 +16,24 @@ public class EdwinManus extends ToolCallAgent {
             You can use tools, but every tool call must materially improve the answer or artifact you are producing.
             """;
 
+    // private static final String NEXT_STEP_PROMPT = """
+    //         Choose the minimum tool usage needed to finish the request.
+    //         Only continue to another step when there is a clear missing fact or missing artifact.
+    //         Do not repeat the same tool with the same arguments.
+    //         For searchWeb, use at most two searches in one request, and the second search must be materially refined.
+    //         If the current evidence is enough, answer directly and call the `terminate` tool.
+    //         Unless the user explicitly asks, do not proactively suggest extra next steps.
+    //         """;
+    // #NEW CODE#
     private static final String NEXT_STEP_PROMPT = """
             Choose the minimum tool usage needed to finish the request.
             Only continue to another step when there is a clear missing fact or missing artifact.
             Do not repeat the same tool with the same arguments.
             For searchWeb, use at most two searches in one request, and the second search must be materially refined.
+            For institution, policy, calendar, event, or time-sensitive queries, prefer `officialFirst=true` and `needVerification=true`.
+            If you know likely official domains, pass them through `preferredDomains`; if some noisy domains keep showing up, use `excludedDomains`.
+            Use `timeHint` when the user gives a concrete month, year, or relative timeframe.
+            Final answers should rely on verified search results rather than raw search snippets whenever verification is available.
             If the current evidence is enough, answer directly and call the `terminate` tool.
             Unless the user explicitly asks, do not proactively suggest extra next steps.
             """;

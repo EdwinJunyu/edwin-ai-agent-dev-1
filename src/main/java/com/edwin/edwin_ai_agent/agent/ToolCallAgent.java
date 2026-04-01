@@ -513,10 +513,22 @@ public class ToolCallAgent extends ReActAgent {
                 JSONObject item = results.getJSONObject(index);
                 String title = normalizeWhitespace(item.getStr("title", ""));
                 String url = normalizeWhitespace(item.getStr("url", ""));
+                String sourceType = normalizeWhitespace(item.getStr("sourceType", ""));
+                String verificationStatus = normalizeWhitespace(item.getStr("verificationStatus", ""));
+                List<String> labels = new ArrayList<>();
+                if (StringUtils.hasText(sourceType)) {
+                    labels.add(sourceType);
+                }
+                if (StringUtils.hasText(verificationStatus) && !"not_requested".equalsIgnoreCase(verificationStatus)) {
+                    labels.add(verificationStatus);
+                }
+                String decoratedTitle = labels.isEmpty()
+                        ? title
+                        : title + " [" + String.join(", ", labels) + "]";
                 if (StringUtils.hasText(title) && StringUtils.hasText(url)) {
-                    topResults.add(title + " (" + url + ")");
+                    topResults.add(decoratedTitle + " (" + url + ")");
                 } else if (StringUtils.hasText(title)) {
-                    topResults.add(title);
+                    topResults.add(decoratedTitle);
                 }
             }
 

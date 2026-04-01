@@ -3,83 +3,152 @@ package com.edwin.edwin_ai_agent.tools;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import org.jsoup.Jsoup;
 import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WebSearchToolTest {
 
     @Test
-    void shouldNormalizeSingleResultFromTavilyResponse() {
-        WebSearchTool tool = new WebSearchTool("test-key", (url, headers, requestBody) -> {
-            JSONObject response = JSONUtil.createObj()
-                    .set("query", "java")
-                    .set("results", new JSONArray()
-                            .put(JSONUtil.createObj()
-                                    .set("title", "Java")
-                                    .set("url", "https://example.com/java")
-                                    .set("content", "Java content")
-                                    .set("score", 0.99)));
-            return JSONUtil.toJsonStr(response);
+    void shouldRemainBackwardCompatibleWithSingleQueryMethod() {
+        List<String> requestBodies = new ArrayList<>();
+        WebScrapingTool scrapingTool = new WebScrapingTool(url -> Jsoup.parse("""
+                <html><head><title>Java Basics</title></head><body><main><p>Java basics for beginners.</p></main></body></html>
+                """, url));
+        WebSearchTool tool = new WebSearchTool("test-key", scrapingTool, (url, headers, requestBody) -> {
+            requestBodies.add(requestBody);
+            return tavilyResponse("Java programming basics",
+                    result("Java Basics", "https://docs.example.com/java", "Java basics for beginners.", 0.92));
         });
 
-        String result = tool.searchWeb("java");
-        JSONObject resultJson = JSONUtil.parseObj(result);
-        JSONArray results = resultJson.getJSONArray("results");
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb("Java programming basics"));
 
-        assertEquals("java", resultJson.getStr("query"));
-        assertEquals(1, results.size());
-        assertEquals("Java", results.getJSONObject(0).getStr("title"));
-        assertEquals("https://example.com/java", results.getJSONObject(0).getStr("url"));
-        assertEquals("Java content", results.getJSONObject(0).getStr("content"));
-        assertFalse(results.getJSONObject(0).containsKey("score"));
+        assertEquals(1, requestBodies.size());
+        assertEquals("Java programming basics", result.getStr("query"));
+        JSONObject firstItem = result.getJSONArray("results").getJSONObject(0);
+        assertEquals("third_party", firstItem.getStr("sourceType"));
+        assertEquals("not_requested", firstItem.getStr("verificationStatus"));
+        assertTrue(firstItem.containsKey("score"));
+        assertTrue(firstItem.containsKey("matchedDateHints"));
+        assertTrue(firstItem.containsKey("verificationSnippet"));
     }
 
     @Test
-    void shouldReturnEmptyResultsWhenTavilyResultsMissing() {
-        WebSearchTool tool = new WebSearchTool("test-key", (url, headers, requestBody) ->
-                JSONUtil.toJsonStr(JSONUtil.createObj().set("query", "empty"))
-        );
+    void shouldRunOfficialRoundThenFallbackAndVerifyTopCandidates() {
+        List<String> requestBodies = new ArrayList<>();
+        WebScrapingTool scrapingTool = new WebScrapingTool(url -> {
+            if (url.contains("calendar")) {
+                return Jsoup.parse("""
+                        <html>
+                          <head><title>Simon Fraser University Student Welcome Calendar</title></head>
+                          <body><main><p>The student welcome social will take place on April 8, 2026 at Surrey campus.</p></main></body>
+                        </html>
+                        """, url);
+            }
+            return Jsoup.parse("""
+                    <html>
+                      <head><title>Community Roundup for SFU Students</title></head>
+                      <body><main><p>A local roundup mentions SFU events and student services.</p></main></body>
+                    </html>
+                    """, url);
+        });
 
-        String result = tool.searchWeb("empty");
-        JSONObject resultJson = JSONUtil.parseObj(result);
+        WebSearchTool tool = new WebSearchTool("test-key", scrapingTool, (url, headers, requestBody) -> {
+            requestBodies.add(requestBody);
+            if (requestBodies.size() == 1) {
+                return tavilyResponse("SFU 2026 April student events official",
+                        result("Academic Dates - Simon Fraser University", "https://www.sfu.ca/calendar/welcome", "Welcome Day for Spring 2026 students.", 0.74));
+            }
+            return tavilyResponse("SFU 2026 April student events",
+                    result("Community Roundup", "https://community.example.com/sfu-roundup", "A roundup of student news and events.", 0.91));
+        });
 
-        assertEquals("empty", resultJson.getStr("query"));
-        assertEquals(0, resultJson.getJSONArray("results").size());
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb(
+                "SFU 2026 April student events",
+                List.of("sfu.ca"),
+                List.of("instagram.com"),
+                "2026-04",
+                true,
+                true,
+                3
+        ));
+
+        assertEquals(2, requestBodies.size());
+
+        JSONObject firstRequest = JSONUtil.parseObj(requestBodies.get(0));
+        assertEquals("advanced", firstRequest.getStr("search_depth"));
+        assertEquals("sfu.ca", firstRequest.getJSONArray("include_domains").getStr(0));
+        assertFalse(firstRequest.containsKey("start_date"));
+        assertFalse(firstRequest.containsKey("end_date"));
+        assertTrue(firstRequest.getStr("query").toLowerCase().contains("official"));
+
+        JSONObject secondRequest = JSONUtil.parseObj(requestBodies.get(1));
+        assertFalse(secondRequest.containsKey("include_domains"));
+        assertEquals("advanced", secondRequest.getStr("search_depth"));
+
+        JSONObject strategy = result.getJSONObject("strategy");
+        assertEquals(2, strategy.getInt("roundsUsed"));
+        assertTrue(strategy.getBool("officialFirst"));
+        assertTrue(strategy.getBool("needVerification"));
+
+        JSONArray results = result.getJSONArray("results");
+        JSONObject topResult = results.getJSONObject(0);
+        assertEquals("official", topResult.getStr("sourceType"));
+        assertEquals("verified", topResult.getStr("verificationStatus"));
+        assertFalse(topResult.getJSONArray("matchedDateHints").isEmpty());
+        assertTrue(topResult.getStr("verificationSnippet").contains("April 8, 2026"));
+    }
+
+    @Test
+    void shouldApplyRelativeTimeRangeForLatestNewsQueries() {
+        List<String> requestBodies = new ArrayList<>();
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    requestBodies.add(requestBody);
+                    return tavilyResponse("latest OpenAI API news");
+                });
+
+        tool.searchWeb("latest OpenAI API news", null, null, "month", false, false, 2);
+
+        JSONObject request = JSONUtil.parseObj(requestBodies.get(0));
+        assertEquals("news", request.getStr("topic"));
+        assertEquals("month", request.getStr("time_range"));
+        assertEquals("advanced", request.getStr("search_depth"));
     }
 
     @Test
     void shouldReturnErrorMessageWhenHttpClientThrowsException() {
-        WebSearchTool tool = new WebSearchTool("test-key", (url, headers, requestBody) -> {
-            throw new RuntimeException("network down");
-        });
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    throw new RuntimeException("network down");
+                });
 
         String result = tool.searchWeb("failure");
 
         assertEquals("Error searching web: network down", result);
     }
 
-    @Test
-    void shouldLimitResultsToFiveItems() {
-        WebSearchTool tool = new WebSearchTool("test-key", (url, headers, requestBody) -> {
-            JSONArray results = new JSONArray();
-            for (int index = 0; index < 7; index++) {
-                results.put(JSONUtil.createObj()
-                        .set("title", "title-" + index)
-                        .set("url", "https://example.com/" + index)
-                        .set("content", "content-" + index));
-            }
-            return JSONUtil.toJsonStr(JSONUtil.createObj()
-                    .set("query", "limit")
-                    .set("results", results));
-        });
+    private String tavilyResponse(String query, JSONObject... results) {
+        JSONArray resultArray = new JSONArray();
+        for (JSONObject result : results) {
+            resultArray.add(result);
+        }
+        return JSONUtil.toJsonStr(JSONUtil.createObj()
+                .set("query", query)
+                .set("results", resultArray));
+    }
 
-        String result = tool.searchWeb("limit");
-        JSONObject resultJson = JSONUtil.parseObj(result);
-        JSONArray results = resultJson.getJSONArray("results");
-
-        assertEquals(5, results.size());
-        assertEquals("title-4", results.getJSONObject(4).getStr("title"));
+    private JSONObject result(String title, String url, String content, double score) {
+        return JSONUtil.createObj()
+                .set("title", title)
+                .set("url", url)
+                .set("content", content)
+                .set("score", score);
     }
 }

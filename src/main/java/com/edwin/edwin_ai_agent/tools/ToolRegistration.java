@@ -16,8 +16,11 @@ public class ToolRegistration {
     @Bean
     public ToolCallback[] allTools() {
         FileOperationTool fileOperationTool = new FileOperationTool();
-        WebSearchTool webSearchTool = new WebSearchTool(tavilyApiKey);
+        // WebSearchTool webSearchTool = new WebSearchTool(tavilyApiKey);
+        // WebScrapingTool webScrapingTool = new WebScrapingTool();
+        // #NEW CODE#
         WebScrapingTool webScrapingTool = new WebScrapingTool();
+        WebSearchTool webSearchTool = new WebSearchTool(tavilyApiKey, webScrapingTool);
         ResourceDownloadTool resourceDownloadTool = new ResourceDownloadTool();
         TerminalOperationTool terminalOperationTool = new TerminalOperationTool();
         PDFGenerationTool pdfGenerationTool = new PDFGenerationTool();

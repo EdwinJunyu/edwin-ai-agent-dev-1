@@ -42,6 +42,9 @@ class WebSearchToolLiveTest {
         assertTrue(results.size() <= 5, "Live Tavily search should keep max 5 results");
         assertFalse(results.getJSONObject(0).getStr("title", "").isBlank(), "First result title should not be blank");
         assertFalse(results.getJSONObject(0).getStr("url", "").isBlank(), "First result url should not be blank");
+        assertFalse(resultJson.getJSONObject("strategy").isEmpty(), "Search strategy metadata should be present");
+        assertFalse(results.getJSONObject(0).getStr("sourceType", "").isBlank(), "First result sourceType should not be blank");
+        assertFalse(results.getJSONObject(0).getStr("verificationStatus", "").isBlank(), "First result verificationStatus should not be blank");
     }
 
     // 优先读取 Spring 配置，其次兼容环境变量和 JVM 参数，方便本地与 CI 复用。
