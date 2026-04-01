@@ -122,6 +122,35 @@ public class WebSearchTool {
     private static final Set<String> ALL_INSTITUTION_SIGNAL_KEYWORDS = mergeKeywordSets(INSTITUTION_SIGNAL_KEYWORDS, ADDITIONAL_INSTITUTION_SIGNAL_KEYWORDS);
     private static final Set<String> ALL_RECENCY_KEYWORDS = mergeKeywordSets(NEWS_KEYWORDS, ADDITIONAL_RECENCY_KEYWORDS);
     private static final Set<String> ALL_ENGLISH_STOPWORDS = mergeKeywordSets(ENGLISH_STOPWORDS, ADDITIONAL_STOPWORDS);
+    // General-purpose data requests need a stricter evidence gate before the agent can safely finalize.
+    private static final Set<String> DATA_INTENSIVE_KEYWORDS = Set.of(
+            "data", "stats", "statistics", "number", "numbers", "figure", "figures", "table", "breakdown",
+            "summary", "price", "prices", "change", "changes", "performance", "trend", "trends", "market cap",
+            "volume", "amount", "count", "counts", "percent", "percentage", "\u6570\u636e", "\u7edf\u8ba1",
+            "\u5217\u8868", "\u6e05\u5355", "\u4ef7\u683c", "\u5e02\u503c", "\u6da8\u8dcc", "\u6da8\u5e45",
+            "\u8dcc\u5e45", "\u8d8b\u52bf", "\u767e\u5206\u6bd4"
+    );
+    private static final Set<String> RANKING_INTENT_KEYWORDS = Set.of(
+            "top", "ranking", "rank", "ranked", "leaderboard", "list", "best", "worst", "highest", "lowest",
+            "\u6392\u540d", "\u699c", "\u699c\u5355", "\u524d\u4e94", "\u524d\u5341", "\u524d5", "\u524d10"
+    );
+    private static final Set<String> PERFORMANCE_INTENT_KEYWORDS = Set.of(
+            "change", "changes", "performance", "gain", "gains", "loss", "losses", "gainer", "gainers",
+            "loser", "losers", "rise", "fall", "return", "returns", "\u6da8\u8dcc", "\u6da8\u8dcc\u60c5\u51b5",
+            "\u6da8\u5e45", "\u8dcc\u5e45", "\u8d70\u52bf", "\u8868\u73b0"
+    );
+    private static final Set<String> QUANTITATIVE_INTENT_KEYWORDS = Set.of(
+            "data", "stats", "statistics", "number", "numbers", "figure", "figures", "price", "prices",
+            "amount", "count", "counts", "percent", "percentage", "market cap", "volume", "rate", "rates",
+            "\u6570\u636e", "\u7edf\u8ba1", "\u6570\u91cf", "\u91d1\u989d", "\u6bd4\u4f8b", "\u767e\u5206\u6bd4",
+            "\u4ef7\u683c", "\u5e02\u503c"
+    );
+    private static final Set<String> ALL_DATA_INTENSIVE_KEYWORDS = mergeKeywordSets(
+            DATA_INTENSIVE_KEYWORDS,
+            RANKING_INTENT_KEYWORDS,
+            PERFORMANCE_INTENT_KEYWORDS,
+            QUANTITATIVE_INTENT_KEYWORDS
+    );
     private static final Pattern DATE_PATTERN = Pattern.compile(
             "\\b20\\d{2}[-/]\\d{1,2}(?:[-/]\\d{1,2})?\\b|20\\d{2}年\\d{1,2}月(?:\\d{1,2}日)?|(?i)\\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\\s+\\d{1,2},\\s*20\\d{2}\\b"
     );
@@ -131,6 +160,8 @@ public class WebSearchTool {
     private static final Pattern YEAR_MONTH_NAME_PATTERN = Pattern.compile("(?i)\\b(20\\d{2})\\s+(january|february|march|april|may|june|july|august|september|october|november|december)\\b");
     private static final Pattern YEAR_ONLY_PATTERN = Pattern.compile("\\b(20\\d{2})\\b");
     private static final Pattern DOMAIN_PATTERN = Pattern.compile("\\b(?:site:)?([a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)+)\\b");
+    private static final Pattern TOP_STYLE_PATTERN = Pattern.compile("(?i)\\btop\\s*\\d+\\b|\\b(?:highest|lowest|largest|smallest|best|worst)\\s+\\d+\\b|\\u524d\\s*[0-9\\u4e00-\\u5341]+");
+    private static final Pattern NUMERIC_EVIDENCE_PATTERN = Pattern.compile("(?i)(?:\\b\\d+(?:\\.\\d+)?%?\\b|\\$\\s*\\d+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?\\s?(?:million|billion|trillion))");
     private static final Map<String, Integer> MONTH_NAME_TO_NUMBER = Map.ofEntries(
             Map.entry("january", 1),
             Map.entry("february", 2),
@@ -273,6 +304,8 @@ public class WebSearchTool {
                 .limit(options.maxResults())
                 .toList();
 
+        SearchEvidenceSummary evidenceSummary = buildEvidenceSummary(options, topCandidates);
+
         return new SearchResponse(
                 options.originalQuery(),
                 roundsUsed,
@@ -280,7 +313,45 @@ public class WebSearchTool {
                 options.needVerification(),
                 resolveTopic(options.signals()),
                 options.timeConstraint().queryHint(),
+                evidenceSummary,
                 topCandidates
+        );
+    }
+
+    private SearchEvidenceSummary buildEvidenceSummary(SearchOptions options, List<SearchCandidate> candidates) {
+        int authoritativeResultCount = (int) candidates.stream()
+                .filter(SearchCandidate::isAuthoritative)
+                .count();
+        int verifiedResultCount = (int) candidates.stream()
+                .filter(candidate -> "verified".equals(candidate.verificationStatus()))
+                .count();
+        int directAnswerCount = (int) candidates.stream()
+                .filter(candidate -> candidate.isDirectAnswer(options))
+                .count();
+        int thresholdQualifiedCount = (int) candidates.stream()
+                .filter(candidate -> candidate.meetsEvidenceThreshold(options))
+                .count();
+        boolean evidenceThresholdMet = thresholdQualifiedCount > 0;
+
+        String evidenceThresholdReason;
+        if (evidenceThresholdMet) {
+            evidenceThresholdReason = "\u5f53\u524d\u5df2\u83b7\u53d6\u5230\u8db3\u4ee5\u652f\u6491\u7ed3\u8bba\u7684\u76f4\u63a5\u8bc1\u636e\u3002";
+        } else if (options.signals().dataIntensive()) {
+            evidenceThresholdReason = "\u5f53\u524d\u68c0\u7d22\u7ed3\u679c\u8fd8\u4e0d\u8db3\u4ee5\u7a33\u5b9a\u652f\u6301\u7cbe\u786e\u7684\u6570\u636e/\u6392\u540d/\u6da8\u8dcc\u7c7b\u7ed3\u8bba\u3002";
+        } else if (authoritativeResultCount > 0 || verifiedResultCount > 0) {
+            evidenceThresholdReason = "\u5df2\u627e\u5230\u5019\u9009\u7ed3\u679c\uff0c\u4f46\u8fd8\u7f3a\u5c11\u80fd\u76f4\u63a5\u56de\u7b54\u95ee\u9898\u7684\u6709\u6548\u8bc1\u636e\u3002";
+        } else {
+            evidenceThresholdReason = "\u5f53\u524d\u7ed3\u679c\u4ecd\u4ee5\u5019\u9009\u9875\u9762\u4e3a\u4e3b\uff0c\u8fd8\u6ca1\u6709\u5f62\u6210\u53ef\u76f4\u63a5\u5f15\u7528\u7684\u8bc1\u636e\u3002";
+        }
+
+        return new SearchEvidenceSummary(
+                options.signals().dataIntensive(),
+                authoritativeResultCount,
+                verifiedResultCount,
+                directAnswerCount,
+                thresholdQualifiedCount,
+                evidenceThresholdMet,
+                evidenceThresholdReason
         );
     }
 
@@ -549,7 +620,9 @@ public class WebSearchTool {
     }
 
     private String resolveSearchDepth(SearchSignals signals, boolean officialRound) {
-        if (officialRound || signals.eventLike() || signals.newsLike()) {
+        // if (officialRound || signals.eventLike() || signals.newsLike()) {
+        // #NEW CODE#
+        if (officialRound || signals.eventLike() || signals.newsLike() || signals.dataIntensive()) {
             return "advanced";
         }
         return "basic";
@@ -565,13 +638,24 @@ public class WebSearchTool {
         // boolean timeSensitive = eventLike || newsLike || hasDateHint(query) || hasDateHint(timeHint) || containsLatestKeyword(loweredQuery);
         // #NEW CODE#
         // Merge baseline keywords with broader synonyms so common phrasings trigger the intended search strategy.
+        // boolean eventLike = containsAny(loweredQuery, ALL_EVENT_KEYWORDS);
+        // boolean newsLike = containsAny(loweredQuery, ALL_NEWS_KEYWORDS);
+        // boolean financeLike = containsAny(loweredQuery, ALL_FINANCE_KEYWORDS);
+        // boolean institutionLike = containsAny(loweredQuery, ALL_INSTITUTION_KEYWORDS) || hasAcronymToken(query);
+        // boolean timeSensitive = eventLike || newsLike || hasDateHint(query) || hasDateHint(timeHint) || containsLatestKeyword(loweredQuery);
+        // boolean cjkQuery = containsCjk(query);
+        // return new SearchSignals(eventLike, newsLike, financeLike, institutionLike, timeSensitive, cjkQuery);
+        // #NEW CODE#
         boolean eventLike = containsAny(loweredQuery, ALL_EVENT_KEYWORDS);
         boolean newsLike = containsAny(loweredQuery, ALL_NEWS_KEYWORDS);
         boolean financeLike = containsAny(loweredQuery, ALL_FINANCE_KEYWORDS);
         boolean institutionLike = containsAny(loweredQuery, ALL_INSTITUTION_KEYWORDS) || hasAcronymToken(query);
+        boolean rankingLike = containsAny(loweredQuery, RANKING_INTENT_KEYWORDS) || matchesTopStylePattern(query);
+        boolean performanceLike = containsAny(loweredQuery, PERFORMANCE_INTENT_KEYWORDS);
+        boolean dataIntensive = rankingLike || performanceLike || containsAny(loweredQuery, ALL_DATA_INTENSIVE_KEYWORDS);
         boolean timeSensitive = eventLike || newsLike || hasDateHint(query) || hasDateHint(timeHint) || containsLatestKeyword(loweredQuery);
         boolean cjkQuery = containsCjk(query);
-        return new SearchSignals(eventLike, newsLike, financeLike, institutionLike, timeSensitive, cjkQuery);
+        return new SearchSignals(eventLike, newsLike, financeLike, institutionLike, timeSensitive, cjkQuery, dataIntensive, rankingLike, performanceLike);
     }
 
     private TimeConstraint resolveTimeConstraint(String query, String timeHint, SearchSignals signals) {
@@ -792,6 +876,22 @@ public class WebSearchTool {
         return containsAny(loweredQuery, ALL_RECENCY_KEYWORDS);
     }
 
+    private static boolean matchesTopStylePattern(String value) {
+        return StringUtils.hasText(value) && TOP_STYLE_PATTERN.matcher(value).find();
+    }
+
+    private static int countNumericEvidence(String value) {
+        if (!StringUtils.hasText(value)) {
+            return 0;
+        }
+        int count = 0;
+        Matcher matcher = NUMERIC_EVIDENCE_PATTERN.matcher(value);
+        while (matcher.find() && count < 8) {
+            count++;
+        }
+        return count;
+    }
+
     private boolean isRelativeTimeRange(String value) {
         if (!StringUtils.hasText(value)) {
             return false;
@@ -924,7 +1024,10 @@ public class WebSearchTool {
             boolean financeLike,
             boolean institutionLike,
             boolean timeSensitive,
-            boolean cjkQuery
+            boolean cjkQuery,
+            boolean dataIntensive,
+            boolean rankingLike,
+            boolean performanceLike
     ) {
     }
 
@@ -976,6 +1079,7 @@ public class WebSearchTool {
             boolean needVerification,
             String topic,
             String resolvedTimeHint,
+            SearchEvidenceSummary evidenceSummary,
             List<SearchCandidate> results
     ) {
         Map<String, Object> toMap() {
@@ -985,12 +1089,35 @@ public class WebSearchTool {
             strategy.put("roundsUsed", roundsUsed);
             strategy.put("topic", topic);
             strategy.put("resolvedTimeHint", resolvedTimeHint);
+            strategy.putAll(evidenceSummary.toMap());
 
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("query", query);
             response.put("strategy", strategy);
             response.put("results", results.stream().map(SearchCandidate::toMap).toList());
             return response;
+        }
+    }
+
+    private record SearchEvidenceSummary(
+            boolean dataIntensive,
+            int authoritativeResultCount,
+            int verifiedResultCount,
+            int directAnswerCount,
+            int thresholdQualifiedCount,
+            boolean evidenceThresholdMet,
+            String evidenceThresholdReason
+    ) {
+        Map<String, Object> toMap() {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("dataIntensive", dataIntensive);
+            map.put("authoritativeResultCount", authoritativeResultCount);
+            map.put("verifiedResultCount", verifiedResultCount);
+            map.put("directAnswerCount", directAnswerCount);
+            map.put("thresholdQualifiedCount", thresholdQualifiedCount);
+            map.put("evidenceThresholdMet", evidenceThresholdMet);
+            map.put("evidenceThresholdReason", evidenceThresholdReason);
+            return map;
         }
     }
 
@@ -1093,6 +1220,26 @@ public class WebSearchTool {
                         && containsAny((title + " " + content + " " + verificationSnippet).toLowerCase(Locale.ROOT), ALL_EVENT_SIGNAL_KEYWORDS);
             }
             return isAuthoritative() && ("verified".equals(verificationStatus) || "content_found".equals(verificationStatus));
+        }
+
+        boolean meetsEvidenceThreshold(SearchOptions options) {
+            if (!isDirectAnswer(options)) {
+                return false;
+            }
+            if (!options.signals().dataIntensive()) {
+                return true;
+            }
+
+            String combinedText = (title + " " + content + " " + verificationSnippet).toLowerCase(Locale.ROOT);
+            boolean rankingMatched = !options.signals().rankingLike()
+                    || containsAny(combinedText, RANKING_INTENT_KEYWORDS)
+                    || matchesTopStylePattern(combinedText);
+            boolean performanceMatched = !options.signals().performanceLike()
+                    || containsAny(combinedText, PERFORMANCE_INTENT_KEYWORDS);
+            boolean quantitativeMatched = containsAny(combinedText, QUANTITATIVE_INTENT_KEYWORDS)
+                    || countNumericEvidence(combinedText) > 0;
+
+            return rankingMatched && performanceMatched && quantitativeMatched;
         }
 
         boolean matchesRequestedTime(List<String> requestedDateTokens) {

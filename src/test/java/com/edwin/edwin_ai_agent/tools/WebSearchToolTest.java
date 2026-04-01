@@ -96,6 +96,8 @@ class WebSearchToolTest {
         assertEquals(2, strategy.getInt("roundsUsed"));
         assertTrue(strategy.getBool("officialFirst"));
         assertTrue(strategy.getBool("needVerification"));
+        assertTrue(strategy.getBool("evidenceThresholdMet"));
+        assertEquals(1, strategy.getInt("thresholdQualifiedCount"));
 
         JSONArray results = result.getJSONArray("results");
         JSONObject topResult = results.getJSONObject(0);
@@ -192,6 +194,63 @@ class WebSearchToolTest {
 
         JSONObject request = JSONUtil.parseObj(requestBodies.get(0));
         assertEquals("finance", request.getStr("topic"));
+    }
+
+    @Test
+    void shouldMarkDataIntensiveQueriesAsBelowThresholdWhenResultMissesKeyIntent() {
+        WebScrapingTool scrapingTool = new WebScrapingTool(url -> Jsoup.parse("""
+                <html>
+                  <head><title>Top 10 Market Cap Companies</title></head>
+                  <body><main><p>Top 10 market cap companies in March 2026: Apple 3200, Microsoft 3100, Nvidia 2800.</p></main></body>
+                </html>
+                """, url));
+        WebSearchTool tool = new WebSearchTool("test-key", scrapingTool, (url, headers, requestBody) ->
+                tavilyResponse("Nasdaq March 2026 top 5 company performance",
+                        result("Top 10 Market Cap Companies", "https://markets.example.com/top10", "Top 10 market cap companies in March 2026.", 0.93)));
+
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb(
+                "Nasdaq March 2026 top 5 company performance",
+                null,
+                null,
+                "2026-03",
+                true,
+                true,
+                3
+        ));
+
+        JSONObject strategy = result.getJSONObject("strategy");
+        assertTrue(strategy.getBool("dataIntensive"));
+        assertFalse(strategy.getBool("evidenceThresholdMet"));
+        assertEquals(0, strategy.getInt("thresholdQualifiedCount"));
+    }
+
+    @Test
+    void shouldApplyEvidenceThresholdToGenericTopListQueriesNotOnlyFinance() {
+        WebScrapingTool scrapingTool = new WebScrapingTool(url -> Jsoup.parse("""
+                <html>
+                  <head><title>Spring 2026 Student Events Calendar</title></head>
+                  <body><main><p>The welcome fair runs on April 8, 2026 and the writing workshop runs on April 10, 2026.</p></main></body>
+                </html>
+                """, url));
+        WebSearchTool tool = new WebSearchTool("test-key", scrapingTool, (url, headers, requestBody) ->
+                tavilyResponse("2026 top 5 campus events attendance",
+                        result("Spring 2026 Student Events Calendar", "https://campus.example.com/events", "Student events for spring 2026.", 0.9)));
+
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb(
+                "2026 top 5 campus events attendance",
+                null,
+                null,
+                "2026-04",
+                true,
+                true,
+                3
+        ));
+
+        JSONObject strategy = result.getJSONObject("strategy");
+        assertTrue(strategy.getBool("dataIntensive"));
+        assertFalse(strategy.getBool("evidenceThresholdMet"));
+        assertEquals(0, strategy.getInt("thresholdQualifiedCount"));
+        assertTrue(strategy.getStr("evidenceThresholdReason").contains("精确"));
     }
 
     @Test

@@ -66,6 +66,13 @@ public class ToolCallAgent extends ReActAgent {
     ) {
     }
 
+    record SearchEvidenceDecision(
+            boolean hasSearchEvidence,
+            boolean evidenceThresholdMet,
+            String reason
+    ) {
+    }
+
     private final ToolCallback[] availableTools;
     private ChatResponse toolCallChatResponse;
     private final ToolCallingManager toolCallingManager;
@@ -79,6 +86,9 @@ public class ToolCallAgent extends ReActAgent {
     private String pendingSearchQuerySignature = "";
     private String lastEffectiveToolResultSummary = "";
     private String lastCompletionReason = "";
+    private boolean lastSearchEvidenceSeen = false;
+    private boolean lastSearchEvidenceThresholdMet = true;
+    private String lastSearchEvidenceReason = "";
     private final Map<String, Integer> toolExecutionCounts = new LinkedHashMap<>();
 
     public ToolCallAgent(ToolCallback[] availableTools) {
@@ -156,15 +166,24 @@ public class ToolCallAgent extends ReActAgent {
                 .anyMatch(response -> TERMINATE_TOOL_NAME.equals(response.name()));
 
         String toolResultSummary = summarizeToolResponses(toolResponseMessage.getResponses());
-        String ongoingStatusContent = resolveOngoingStatusContent(toolCalls, toolResponseMessage.getResponses());
-        rememberExecutedToolBatch(toolCalls, toolResultSummary);
+        SearchEvidenceDecision searchEvidenceDecision = evaluateSearchEvidenceDecision(toolResponseMessage.getResponses());
+        String ongoingStatusContent = resolveOngoingStatusContent(toolCalls, toolResponseMessage.getResponses(), searchEvidenceDecision);
+        rememberExecutedToolBatch(toolCalls, toolResultSummary, searchEvidenceDecision);
 
         if (terminateToolCalled) {
             setState(AgentState.FINISHED);
-            lastCompletionReason = "The model called terminate because the current evidence is enough to finish.";
-            String finalReply = StringUtils.hasText(assistantText)
-                    ? assistantText
-                    : buildFallbackFinalReply(lastCompletionReason);
+            // lastCompletionReason = "The model called terminate because the current evidence is enough to finish.";
+            // String finalReply = StringUtils.hasText(assistantText)
+            //         ? assistantText
+            //         : buildFallbackFinalReply(lastCompletionReason);
+            // #NEW CODE#
+            boolean blockedByEvidenceThreshold = shouldBlockUnsupportedFinalAnswer(searchEvidenceDecision);
+            lastCompletionReason = blockedByEvidenceThreshold
+                    ? searchEvidenceDecision.reason()
+                    : "\u6a21\u578b\u5df2\u8c03\u7528 terminate\uff0c\u56e0\u4e3a\u5f53\u524d\u8bc1\u636e\u5df2\u8db3\u4ee5\u5b8c\u6210\u4efb\u52a1\u3002";
+            String finalReply = blockedByEvidenceThreshold
+                    ? buildEvidenceThresholdFallback(searchEvidenceDecision.reason())
+                    : (StringUtils.hasText(assistantText) ? assistantText : buildFallbackFinalReply(lastCompletionReason));
             return buildPayload(
                     buildBubble("thought", "\u601d\u8003\u8fc7\u7a0b", buildFinalThoughtContent()),
                     buildBubble("final", "\u6700\u7ec8\u56de\u590d", finalReply)
@@ -188,6 +207,9 @@ public class ToolCallAgent extends ReActAgent {
         pendingSearchQuerySignature = "";
         lastEffectiveToolResultSummary = "";
         lastCompletionReason = "";
+        lastSearchEvidenceSeen = false;
+        lastSearchEvidenceThresholdMet = true;
+        lastSearchEvidenceReason = "";
         toolExecutionCounts.clear();
     }
 
@@ -217,7 +239,7 @@ public class ToolCallAgent extends ReActAgent {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return new ToolBatchGuardDecision(
                     GuardAction.FINISH,
-                    "The model did not provide a new tool plan, so the agent will finish with current evidence.",
+                    "\u6a21\u578b\u672a\u63d0\u4f9b\u65b0\u7684\u5de5\u5177\u8ba1\u5212\uff0c\u7cfb\u7edf\u5c06\u57fa\u4e8e\u5f53\u524d\u8bc1\u636e\u7ed3\u675f\u3002",
                     "",
                     ""
             );
@@ -227,7 +249,7 @@ public class ToolCallAgent extends ReActAgent {
         if (StringUtils.hasText(lastToolBatchSignature) && lastToolBatchSignature.equals(batchSignature)) {
             return guardDecision(
                     correctionRetry,
-                    "Detected the same tool batch again. Repeating it would only duplicate existing work.",
+                    "\u68c0\u6d4b\u5230\u76f8\u540c\u7684\u5de5\u5177\u6279\u6b21\u518d\u6b21\u51fa\u73b0\uff0c\u91cd\u590d\u6267\u884c\u53ea\u4f1a\u590d\u5236\u5df2\u6709\u5de5\u4f5c\u3002",
                     batchSignature,
                     ""
             );
@@ -237,7 +259,7 @@ public class ToolCallAgent extends ReActAgent {
         if (searchQueries.size() > 1) {
             return guardDecision(
                     correctionRetry,
-                    "The model scheduled multiple searchWeb calls in the same step. The plan must be narrowed first.",
+                    "\u6a21\u578b\u5728\u540c\u4e00\u6b65\u4e2d\u5b89\u6392\u4e86\u591a\u4e2a searchWeb \u8c03\u7528\uff0c\u9700\u8981\u5148\u6536\u7a84\u8ba1\u5212\u3002",
                     batchSignature,
                     ""
             );
@@ -249,7 +271,7 @@ public class ToolCallAgent extends ReActAgent {
             if (executedSearchCount >= SEARCH_WEB_MAX_EXECUTIONS) {
                 return guardDecision(
                         correctionRetry,
-                        "searchWeb has already reached the per-request execution budget of 2.",
+                        "searchWeb \u5df2\u8fbe\u5230\u5355\u6b21\u8bf7\u6c42 2 \u6b21\u7684\u6267\u884c\u9884\u7b97\u3002",
                         batchSignature,
                         searchQuerySignature
                 );
@@ -257,7 +279,7 @@ public class ToolCallAgent extends ReActAgent {
             if (executedSearchCount == 1 && !isRefinedSearch(lastSearchQuerySignature, searchQuerySignature)) {
                 return guardDecision(
                         correctionRetry,
-                        "The second searchWeb call must use a materially different refined query.",
+                        "\u7b2c\u4e8c\u6b21 searchWeb \u5fc5\u987b\u4f7f\u7528\u5b9e\u8d28\u4e0d\u540c\u7684 refined query\u3002",
                         batchSignature,
                         searchQuerySignature
                 );
@@ -299,9 +321,23 @@ public class ToolCallAgent extends ReActAgent {
 
             if (toolCalls.isEmpty()) {
                 getMessageList().add(assistantMessage);
-                lastCompletionReason = correctionRetry
-                        ? "The correction retry did not produce a new tool plan, so the agent will finish now."
-                        : "The model decided it already has enough information to answer directly.";
+                SearchEvidenceDecision searchEvidenceDecision = getLastSearchEvidenceDecision();
+                if (shouldBlockUnsupportedFinalAnswer(searchEvidenceDecision) && !correctionRetry) {
+                    getMessageList().add(new UserMessage(buildEvidenceThresholdPrompt(searchEvidenceDecision.reason())));
+                    return thinkInternal(true);
+                }
+                // lastCompletionReason = correctionRetry
+                //         ? "The correction retry did not produce a new tool plan, so the agent will finish now."
+                //         : "The model decided it already has enough information to answer directly.";
+                // #NEW CODE#
+                if (shouldBlockUnsupportedFinalAnswer(searchEvidenceDecision)) {
+                    lastCompletionReason = searchEvidenceDecision.reason();
+                    lastAssistantText = buildEvidenceThresholdFallback(searchEvidenceDecision.reason());
+                } else {
+                    lastCompletionReason = correctionRetry
+                            ? "\u7ea0\u504f\u91cd\u8bd5\u540e\u672a\u4ea7\u751f\u65b0\u7684\u5de5\u5177\u8ba1\u5212\uff0c\u7cfb\u7edf\u5c06\u7acb\u5373\u7ed3\u675f\u3002"
+                            : "\u6a21\u578b\u5224\u65ad\u5f53\u524d\u4fe1\u606f\u5df2\u8db3\u591f\u76f4\u63a5\u4f5c\u7b54\u3002";
+                }
                 return false;
             }
 
@@ -327,8 +363,11 @@ public class ToolCallAgent extends ReActAgent {
             return false;
         } catch (Exception e) {
             log.error("{} think stage failed: {}", getName(), e.getMessage(), e);
-            lastAssistantText = "Thinking failed: " + e.getMessage();
-            lastCompletionReason = "The think stage failed, so the agent stopped with the current state.";
+            // lastAssistantText = "Thinking failed: " + e.getMessage();
+            // lastCompletionReason = "The think stage failed, so the agent stopped with the current state.";
+            // #NEW CODE#
+            lastAssistantText = "\u601d\u8003\u9636\u6bb5\u6267\u884c\u5931\u8d25\uff1a" + e.getMessage();
+            lastCompletionReason = "\u601d\u8003\u9636\u6bb5\u5931\u8d25\uff0c\u7cfb\u7edf\u5df2\u57fa\u4e8e\u5f53\u524d\u72b6\u6001\u505c\u6b62\u3002";
             getMessageList().add(new AssistantMessage(lastAssistantText));
             return false;
         }
@@ -362,12 +401,20 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     private String buildCorrectionPrompt(String reason) {
+        // return """
+        //         The previous tool plan is redundant or over budget: %s
+        //         Do not repeat the same tool call or the same search query.
+        //         Use the evidence already collected to answer now, or choose a materially different tool or refined arguments.
+        //         If current evidence is sufficient, provide the final answer and call the `terminate` tool.
+        //         Unless the user explicitly asked, do not proactively suggest additional next steps.
+        //         """.formatted(reason).trim();
+        // #NEW CODE#
         return """
-                The previous tool plan is redundant or over budget: %s
-                Do not repeat the same tool call or the same search query.
-                Use the evidence already collected to answer now, or choose a materially different tool or refined arguments.
-                If current evidence is sufficient, provide the final answer and call the `terminate` tool.
-                Unless the user explicitly asked, do not proactively suggest additional next steps.
+                \u4e0a\u4e00\u8f6e\u5de5\u5177\u8ba1\u5212\u5b58\u5728\u91cd\u590d\u6216\u9884\u7b97\u95ee\u9898\uff1a%s
+                \u4e0d\u8981\u91cd\u590d\u76f8\u540c\u7684\u5de5\u5177\u8c03\u7528\u6216\u76f8\u540c\u7684\u641c\u7d22\u8bcd\u3002
+                \u8bf7\u8981\u4e48\u57fa\u4e8e\u5df2\u6709\u8bc1\u636e\u76f4\u63a5\u4f5c\u7b54\uff0c\u8981\u4e48\u9009\u62e9\u5b9e\u8d28\u4e0d\u540c\u7684\u5de5\u5177\u6216 refined arguments\u3002
+                \u53ea\u6709\u5728\u5f53\u524d\u8bc1\u636e\u5df2\u8db3\u591f\u7684\u60c5\u51b5\u4e0b\uff0c\u624d\u8f93\u51fa\u6700\u7ec8\u7b54\u6848\u5e76\u8c03\u7528 `terminate` \u5de5\u5177\u3002
+                \u9664\u975e\u7528\u6237\u660e\u786e\u8981\u6c42\uff0c\u4e0d\u8981\u4e3b\u52a8\u5efa\u8bae\u989d\u5916\u7684\u4e0b\u4e00\u6b65\u3002
                 """.formatted(reason).trim();
     }
 
@@ -393,7 +440,9 @@ public class ToolCallAgent extends ReActAgent {
     private String buildFinalThoughtContent() {
         String completionReason = StringUtils.hasText(lastCompletionReason)
                 ? lastCompletionReason
-                : "The current evidence is sufficient, so the agent will finish here.";
+                // : "The current evidence is sufficient, so the agent will finish here.";
+                // #NEW CODE#
+                : "\u5f53\u524d\u8bc1\u636e\u5df2\u8db3\u591f\uff0c\u7cfb\u7edf\u5728\u6b64\u7ed3\u675f\u3002";
         return mergeBlocks(
                 block("\u5b8c\u6210\u539f\u56e0", completionReason),
                 block("\u6700\u540e\u4e00\u6b21\u6709\u6548\u5de5\u5177\u7ed3\u679c\u6458\u8981", lastEffectiveToolResultSummary)
@@ -403,10 +452,11 @@ public class ToolCallAgent extends ReActAgent {
     // Keep the status phase specific so the frontend shows whether the agent is still searching, verifying, or composing.
     private String resolveOngoingStatusContent(
             List<AssistantMessage.ToolCall> toolCalls,
-            List<ToolResponseMessage.ToolResponse> responses
+            List<ToolResponseMessage.ToolResponse> responses,
+            SearchEvidenceDecision searchEvidenceDecision
     ) {
         if (containsToolCall(toolCalls, SEARCH_WEB_TOOL_NAME)) {
-            return resolveSearchWebStatusContent(responses);
+            return resolveSearchWebStatusContent(responses, searchEvidenceDecision);
         }
         if (containsToolCall(toolCalls, SCRAPE_WEB_PAGE_TOOL_NAME)) {
             return buildStatusContent(
@@ -420,7 +470,7 @@ public class ToolCallAgent extends ReActAgent {
         );
     }
 
-    private String resolveSearchWebStatusContent(List<ToolResponseMessage.ToolResponse> responses) {
+    private String resolveSearchWebStatusContent(List<ToolResponseMessage.ToolResponse> responses, SearchEvidenceDecision searchEvidenceDecision) {
         boolean hasSearchResults = false;
         boolean hasAuthoritativeResult = false;
         boolean hasVerifiedResult = false;
@@ -466,13 +516,13 @@ public class ToolCallAgent extends ReActAgent {
             }
         }
 
-        if (hasVerifiedResult) {
+        if (hasVerifiedResult && !shouldBlockUnsupportedFinalAnswer(searchEvidenceDecision)) {
             return buildStatusContent(
                     STATUS_DRAFTING,
                     "\u5df2\u7ecf\u62ff\u5230\u901a\u8fc7\u6838\u9a8c\u7684\u6709\u6548\u8bc1\u636e\uff0c\u6b63\u5728\u5408\u5e76\u5173\u952e\u4fe1\u606f\u5e76\u6574\u7406\u6700\u7ec8\u56de\u590d\u3002"
             );
         }
-        if (hasAuthoritativeResult || hasContentFoundResult || needVerification) {
+        if (hasAuthoritativeResult || hasContentFoundResult || needVerification || shouldBlockUnsupportedFinalAnswer(searchEvidenceDecision)) {
             return buildStatusContent(
                     STATUS_VERIFYING,
                     "\u5df2\u627e\u5230\u5019\u9009\u7ed3\u679c\uff0c\u6b63\u5728\u786e\u8ba4\u5b83\u4eec\u662f\u5426\u5c5e\u4e8e\u5b98\u65b9/\u6743\u5a01\u6765\u6e90\uff0c\u5e76\u68c0\u67e5\u65f6\u95f4\u7ebf\u7d22\u662f\u5426\u7b26\u5408\u95ee\u9898\u8981\u6c42\u3002"
@@ -507,15 +557,61 @@ public class ToolCallAgent extends ReActAgent {
 
     private String buildFallbackFinalReply(String reason) {
         if (StringUtils.hasText(lastEffectiveToolResultSummary)) {
-            return "Here is the conclusion based on the effective tool output so far:\n" + lastEffectiveToolResultSummary;
+            // return "Here is the conclusion based on the effective tool output so far:\n" + lastEffectiveToolResultSummary;
+            // #NEW CODE#
+            return "\u4ee5\u4e0b\u662f\u57fa\u4e8e\u76ee\u524d\u6709\u6548\u5de5\u5177\u8f93\u51fa\u7684\u7ed3\u8bba\uff1a\n" + lastEffectiveToolResultSummary;
         }
         if (StringUtils.hasText(reason)) {
             return reason;
         }
-        return "There is no new effective tool result to continue from, so the agent stops here.";
+        // return "There is no new effective tool result to continue from, so the agent stops here.";
+        // #NEW CODE#
+        return "\u76ee\u524d\u6ca1\u6709\u65b0\u7684\u6709\u6548\u5de5\u5177\u7ed3\u679c\u53ef\u4ee5\u7ee7\u7eed\u652f\u6491\uff0c\u7cfb\u7edf\u5728\u6b64\u505c\u6b62\u3002";
     }
 
-    private void rememberExecutedToolBatch(List<AssistantMessage.ToolCall> toolCalls, String toolResultSummary) {
+    private String buildEvidenceThresholdPrompt(String reason) {
+        return """
+                \u5f53\u524d\u641c\u7d22\u8bc1\u636e\u8fd8\u6ca1\u6709\u8fbe\u5230\u53ef\u4ee5\u7a33\u5b9a\u6536\u5c3e\u7684\u95e8\u69db\uff1a%s
+                \u5982\u679c\u8fd8\u6709\u53ef\u4ee5\u5b9e\u8d28\u63d0\u5347\u8bc1\u636e\u7684\u5de5\u5177\u64cd\u4f5c\uff0c\u8bf7\u4f7f\u7528\u66f4\u76f4\u63a5\u7684 refined search \u6216\u66f4\u6743\u5a01\u7684\u9875\u9762\u3002
+                \u5982\u679c\u76ee\u524d\u65e0\u6cd5\u62ff\u5230\u66f4\u5f3a\u7684\u8bc1\u636e\uff0c\u8bf7\u660e\u786e\u8bf4\u51fa\u8bc1\u636e\u4e0d\u8db3\uff0c\u4e0d\u8981\u8865\u5168\u672a\u88ab\u5de5\u5177\u8bc1\u636e\u652f\u6301\u7684\u5177\u4f53\u6570\u503c\u6216\u6392\u540d\u3002
+                \u53ea\u6709\u5728\u8bc1\u636e\u8db3\u4ee5\u652f\u6491\u7ed3\u8bba\u65f6\uff0c\u624d\u53ef\u4ee5\u8c03\u7528 `terminate`\u3002
+                """.formatted(reason).trim();
+    }
+
+    private String buildEvidenceThresholdFallback(String reason) {
+        String summaryBlock = StringUtils.hasText(lastEffectiveToolResultSummary)
+                ? "\n\n\u76ee\u524d\u53ef\u4ee5\u786e\u8ba4\u7684\u68c0\u7d22\u7ed3\u679c\uff1a\n" + lastEffectiveToolResultSummary
+                : "";
+        return "\u5f53\u524d\u8bc1\u636e\u8fd8\u4e0d\u8db3\u4ee5\u652f\u6301\u7cbe\u786e\u7ed3\u8bba\uff0c\u7cfb\u7edf\u4e0d\u4f1a\u8f93\u51fa\u672a\u88ab\u5de5\u5177\u8bc1\u636e\u652f\u6301\u7684\u5177\u4f53\u6570\u636e\u6216\u5217\u8868\u3002"
+                + (StringUtils.hasText(reason) ? "\n\n\u539f\u56e0\uff1a" + reason : "")
+                + summaryBlock;
+    }
+
+    // private void rememberExecutedToolBatch(List<AssistantMessage.ToolCall> toolCalls, String toolResultSummary) {
+    //     for (AssistantMessage.ToolCall toolCall : toolCalls) {
+    //         toolExecutionCounts.merge(toolCall.name(), 1, Integer::sum);
+    //     }
+    //
+    //     if (StringUtils.hasText(pendingToolBatchSignature)) {
+    //         lastToolBatchSignature = pendingToolBatchSignature;
+    //     }
+    //     if (StringUtils.hasText(pendingSearchQuerySignature)) {
+    //         lastSearchQuerySignature = pendingSearchQuerySignature;
+    //     }
+    //     if (StringUtils.hasText(toolResultSummary)) {
+    //         lastEffectiveToolResultSummary = toolResultSummary;
+    //         log.info(toolResultSummary);
+    //     }
+    //
+    //     pendingToolBatchSignature = "";
+    //     pendingSearchQuerySignature = "";
+    // }
+    // #NEW CODE#
+    private void rememberExecutedToolBatch(
+            List<AssistantMessage.ToolCall> toolCalls,
+            String toolResultSummary,
+            SearchEvidenceDecision searchEvidenceDecision
+    ) {
         for (AssistantMessage.ToolCall toolCall : toolCalls) {
             toolExecutionCounts.merge(toolCall.name(), 1, Integer::sum);
         }
@@ -530,9 +626,71 @@ public class ToolCallAgent extends ReActAgent {
             lastEffectiveToolResultSummary = toolResultSummary;
             log.info(toolResultSummary);
         }
+        if (searchEvidenceDecision != null && searchEvidenceDecision.hasSearchEvidence()) {
+            lastSearchEvidenceSeen = true;
+            lastSearchEvidenceThresholdMet = searchEvidenceDecision.evidenceThresholdMet();
+            lastSearchEvidenceReason = normalizeWhitespace(searchEvidenceDecision.reason());
+        }
 
         pendingToolBatchSignature = "";
         pendingSearchQuerySignature = "";
+    }
+
+    private SearchEvidenceDecision evaluateSearchEvidenceDecision(List<ToolResponseMessage.ToolResponse> responses) {
+        boolean hasSearchEvidence = false;
+        boolean evidenceThresholdMet = true;
+        String reason = "";
+
+        for (ToolResponseMessage.ToolResponse response : responses) {
+            if (!SEARCH_WEB_TOOL_NAME.equals(response.name())) {
+                continue;
+            }
+            hasSearchEvidence = true;
+            try {
+                JSONObject responseObject = JSONUtil.parseObj(response.responseData());
+                JSONObject strategyObject = responseObject.getJSONObject("strategy");
+                if (strategyObject == null) {
+                    continue;
+                }
+
+                Boolean thresholdMet = strategyObject.getBool("evidenceThresholdMet");
+                if (thresholdMet != null) {
+                    evidenceThresholdMet = thresholdMet;
+                }
+
+                String thresholdReason = normalizeWhitespace(strategyObject.getStr("evidenceThresholdReason", ""));
+                if (StringUtils.hasText(thresholdReason)) {
+                    reason = thresholdReason;
+                }
+            } catch (Exception ignored) {
+                // Preserve backward compatibility with older or non-JSON search tool payloads.
+            }
+        }
+
+        if (!hasSearchEvidence) {
+            return new SearchEvidenceDecision(false, true, "");
+        }
+        if (!StringUtils.hasText(reason) && !evidenceThresholdMet) {
+            reason = "\u5f53\u524d\u641c\u7d22\u7ed3\u679c\u8fd8\u4e0d\u8db3\u4ee5\u652f\u6301\u76f4\u63a5\u7ed9\u51fa\u7ed3\u8bba\u3002";
+        }
+        return new SearchEvidenceDecision(hasSearchEvidence, evidenceThresholdMet, reason);
+    }
+
+    private SearchEvidenceDecision getLastSearchEvidenceDecision() {
+        if (!lastSearchEvidenceSeen) {
+            return new SearchEvidenceDecision(false, true, "");
+        }
+        return new SearchEvidenceDecision(
+                true,
+                lastSearchEvidenceThresholdMet,
+                normalizeWhitespace(lastSearchEvidenceReason)
+        );
+    }
+
+    private boolean shouldBlockUnsupportedFinalAnswer(SearchEvidenceDecision searchEvidenceDecision) {
+        return searchEvidenceDecision != null
+                && searchEvidenceDecision.hasSearchEvidence()
+                && !searchEvidenceDecision.evidenceThresholdMet();
     }
 
     private String formatToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
