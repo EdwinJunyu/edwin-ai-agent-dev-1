@@ -69,6 +69,59 @@ public class WebSearchTool {
             "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by", "at", "from",
             "latest", "official", "site", "event", "events", "activity", "activities", "calendar", "schedule"
     );
+    // Broaden intent recognition so more real-world campus, public-service, and business queries map to the right plan.
+    private static final Set<String> ADDITIONAL_EVENT_KEYWORDS = Set.of(
+            "webinar", "webinars", "meetup", "meetups", "seminar", "seminars", "conference", "conferences",
+            "summit", "summits", "expo", "fair", "hackathon", "lecture", "lectures", "forum", "forums",
+            "town hall", "open house", "open day", "info session", "information session", "deadline", "deadlines",
+            "registration", "registrations", "register", "ceremony", "convocation", "graduation", "bootcamp",
+            "competition", "training", "class schedule", "timetable"
+    );
+    private static final Set<String> ADDITIONAL_NEWS_KEYWORDS = Set.of(
+            "press release", "press releases", "statement", "statements", "bulletin", "bulletins", "notice",
+            "notices", "advisory", "advisories", "briefing", "briefings", "report", "reports", "memo", "memos",
+            "communique", "communiques"
+    );
+    private static final Set<String> ADDITIONAL_FINANCE_KEYWORDS = Set.of(
+            "dividend", "dividends", "forecast", "forecasts", "valuation", "valuations", "revenue", "revenues",
+            "profit", "profits", "margin", "margins", "analyst", "analysts", "price target", "quarterly results",
+            "fiscal", "10-k", "10-q", "sec filing", "sec filings"
+    );
+    private static final Set<String> ADDITIONAL_INSTITUTION_KEYWORDS = Set.of(
+            "institute", "institution", "academy", "center", "centre", "clinic", "hospital", "agency", "bureau",
+            "commission", "authority", "council", "board", "foundation", "museum", "library", "laboratory", "lab",
+            "registry", "registrar", "student union", "union", "guild"
+    );
+    private static final Set<String> ADDITIONAL_EVENT_SIGNAL_KEYWORDS = Set.of(
+            "webinar", "seminar", "conference", "summit", "lecture", "registration", "deadline", "open house",
+            "info session", "hackathon", "fair", "expo", "forum", "town hall", "graduation", "convocation"
+    );
+    private static final Set<String> ADDITIONAL_INSTITUTION_SIGNAL_KEYWORDS = Set.of(
+            "institute", "academy", "center", "centre", "clinic", "hospital", "authority", "agency", "bureau",
+            "commission", "council", "board", "foundation", "library", "museum", "registry", "registrar",
+            "office of", "student union", "visitor services"
+    );
+    private static final Set<String> ADDITIONAL_RECENCY_KEYWORDS = Set.of(
+            "newest", "fresh", "upcoming", "this week", "this month", "this year", "just announced"
+    );
+    private static final Set<String> ADDITIONAL_STOPWORDS = Set.of(
+            "webinar", "webinars", "meetup", "meetups", "seminar", "seminars", "conference", "conferences",
+            "registration", "registrations", "announcement", "announcements", "bulletin", "bulletins", "notice",
+            "notices", "press", "release", "releases", "student", "students", "university", "college", "school",
+            "government", "department", "office", "agency", "board", "council", "clinic", "hospital"
+    );
+    private static final Set<String> PAGE_TYPE_BOOST_KEYWORDS = Set.of(
+            "calendar", "announcement", "welcome", "webinar", "seminar", "conference", "registration",
+            "bulletin", "notice", "press release", "open house", "deadline"
+    );
+    private static final Set<String> ALL_EVENT_KEYWORDS = mergeKeywordSets(EVENT_KEYWORDS, ADDITIONAL_EVENT_KEYWORDS);
+    private static final Set<String> ALL_NEWS_KEYWORDS = mergeKeywordSets(NEWS_KEYWORDS, ADDITIONAL_NEWS_KEYWORDS);
+    private static final Set<String> ALL_FINANCE_KEYWORDS = mergeKeywordSets(FINANCE_KEYWORDS, ADDITIONAL_FINANCE_KEYWORDS);
+    private static final Set<String> ALL_INSTITUTION_KEYWORDS = mergeKeywordSets(INSTITUTION_KEYWORDS, ADDITIONAL_INSTITUTION_KEYWORDS);
+    private static final Set<String> ALL_EVENT_SIGNAL_KEYWORDS = mergeKeywordSets(EVENT_SIGNAL_KEYWORDS, ADDITIONAL_EVENT_SIGNAL_KEYWORDS);
+    private static final Set<String> ALL_INSTITUTION_SIGNAL_KEYWORDS = mergeKeywordSets(INSTITUTION_SIGNAL_KEYWORDS, ADDITIONAL_INSTITUTION_SIGNAL_KEYWORDS);
+    private static final Set<String> ALL_RECENCY_KEYWORDS = mergeKeywordSets(NEWS_KEYWORDS, ADDITIONAL_RECENCY_KEYWORDS);
+    private static final Set<String> ALL_ENGLISH_STOPWORDS = mergeKeywordSets(ENGLISH_STOPWORDS, ADDITIONAL_STOPWORDS);
     private static final Pattern DATE_PATTERN = Pattern.compile(
             "\\b20\\d{2}[-/]\\d{1,2}(?:[-/]\\d{1,2})?\\b|20\\d{2}年\\d{1,2}月(?:\\d{1,2}日)?|(?i)\\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\\s+\\d{1,2},\\s*20\\d{2}\\b"
     );
@@ -445,17 +498,29 @@ public class WebSearchTool {
         return 0.8;
     }
 
+    //页面类型加权
     private double pageTypeWeight(SearchCandidate candidate, SearchOptions options) {
         String combinedText = (candidate.title() + " " + candidate.content() + " " + candidate.verificationSnippet()).toLowerCase(Locale.ROOT);
         double score = 0.0;
 
-        if (options.signals().eventLike() && containsAny(combinedText, EVENT_SIGNAL_KEYWORDS)) {
+        // if (options.signals().eventLike() && containsAny(combinedText, EVENT_SIGNAL_KEYWORDS)) {
+        //     score += 1.2;
+        // }
+        // if (options.signals().institutionLike() && containsAny(combinedText, INSTITUTION_SIGNAL_KEYWORDS)) {
+        //     score += 0.8;
+        // }
+        // if (combinedText.contains("calendar") || combinedText.contains("announcement") || combinedText.contains("welcome")) {
+        //     score += 0.5;
+        // }
+        // #NEW CODE#
+        // Reuse the broader marker sets in ranking so newly supported query phrasings also boost the right pages.
+        if (options.signals().eventLike() && containsAny(combinedText, ALL_EVENT_SIGNAL_KEYWORDS)) {
             score += 1.2;
         }
-        if (options.signals().institutionLike() && containsAny(combinedText, INSTITUTION_SIGNAL_KEYWORDS)) {
+        if (options.signals().institutionLike() && containsAny(combinedText, ALL_INSTITUTION_SIGNAL_KEYWORDS)) {
             score += 0.8;
         }
-        if (combinedText.contains("calendar") || combinedText.contains("announcement") || combinedText.contains("welcome")) {
+        if (containsAny(combinedText, PAGE_TYPE_BOOST_KEYWORDS)) {
             score += 0.5;
         }
 
@@ -490,12 +555,20 @@ public class WebSearchTool {
         return "basic";
     }
 
+    //查询意图识
     private SearchSignals detectSignals(String query, String timeHint) {
         String loweredQuery = query.toLowerCase(Locale.ROOT);
-        boolean eventLike = containsAny(loweredQuery, EVENT_KEYWORDS);
-        boolean newsLike = containsAny(loweredQuery, NEWS_KEYWORDS);
-        boolean financeLike = containsAny(loweredQuery, FINANCE_KEYWORDS);
-        boolean institutionLike = containsAny(loweredQuery, INSTITUTION_KEYWORDS) || hasAcronymToken(query);
+        // boolean eventLike = containsAny(loweredQuery, EVENT_KEYWORDS);
+        // boolean newsLike = containsAny(loweredQuery, NEWS_KEYWORDS);
+        // boolean financeLike = containsAny(loweredQuery, FINANCE_KEYWORDS);
+        // boolean institutionLike = containsAny(loweredQuery, INSTITUTION_KEYWORDS) || hasAcronymToken(query);
+        // boolean timeSensitive = eventLike || newsLike || hasDateHint(query) || hasDateHint(timeHint) || containsLatestKeyword(loweredQuery);
+        // #NEW CODE#
+        // Merge baseline keywords with broader synonyms so common phrasings trigger the intended search strategy.
+        boolean eventLike = containsAny(loweredQuery, ALL_EVENT_KEYWORDS);
+        boolean newsLike = containsAny(loweredQuery, ALL_NEWS_KEYWORDS);
+        boolean financeLike = containsAny(loweredQuery, ALL_FINANCE_KEYWORDS);
+        boolean institutionLike = containsAny(loweredQuery, ALL_INSTITUTION_KEYWORDS) || hasAcronymToken(query);
         boolean timeSensitive = eventLike || newsLike || hasDateHint(query) || hasDateHint(timeHint) || containsLatestKeyword(loweredQuery);
         boolean cjkQuery = containsCjk(query);
         return new SearchSignals(eventLike, newsLike, financeLike, institutionLike, timeSensitive, cjkQuery);
@@ -584,8 +657,11 @@ public class WebSearchTool {
                 || domain.endsWith("gc.ca");
     }
 
+    //机构页判
     private boolean pageLooksInstitutional(String text) {
-        return containsAny(text.toLowerCase(Locale.ROOT), INSTITUTION_SIGNAL_KEYWORDS);
+        // return containsAny(text.toLowerCase(Locale.ROOT), INSTITUTION_SIGNAL_KEYWORDS);
+        // #NEW CODE#
+        return containsAny(text.toLowerCase(Locale.ROOT), ALL_INSTITUTION_SIGNAL_KEYWORDS);
     }
 
     private boolean domainMatchesQueryIdentity(String domain, List<String> queryTokens) {
@@ -667,12 +743,23 @@ public class WebSearchTool {
         return new ArrayList<>(merged);
     }
 
+    // Keep merged keyword sets deterministic and reusable across ranking, verification, and query planning.
+    private static Set<String> mergeKeywordSets(Set<String>... keywordGroups) {
+        LinkedHashSet<String> mergedKeywords = new LinkedHashSet<>();
+        for (Set<String> keywordGroup : keywordGroups) {
+            mergedKeywords.addAll(keywordGroup);
+        }
+        return Set.copyOf(mergedKeywords);
+    }
+
     private List<String> extractRankingTokens(String query) {
         LinkedHashSet<String> tokens = new LinkedHashSet<>();
         String loweredQuery = query.toLowerCase(Locale.ROOT);
 
         for (String part : loweredQuery.split("[^\\p{IsAlphabetic}\\p{IsDigit}]+")) {
-            if (part.length() < 2 || ENGLISH_STOPWORDS.contains(part) || part.matches("20\\d{2}") || part.matches("\\d+")) {
+            // if (part.length() < 2 || ENGLISH_STOPWORDS.contains(part) || part.matches("20\\d{2}") || part.matches("\\d+")) {
+            // #NEW CODE#
+            if (part.length() < 2 || ALL_ENGLISH_STOPWORDS.contains(part) || part.matches("20\\d{2}") || part.matches("\\d+")) {
                 continue;
             }
             tokens.add(part);
@@ -700,7 +787,9 @@ public class WebSearchTool {
     }
 
     private boolean containsLatestKeyword(String loweredQuery) {
-        return loweredQuery.contains("latest") || loweredQuery.contains("today") || loweredQuery.contains("recent");
+        // return loweredQuery.contains("latest") || loweredQuery.contains("today") || loweredQuery.contains("recent");
+        // #NEW CODE#
+        return containsAny(loweredQuery, ALL_RECENCY_KEYWORDS);
     }
 
     private boolean isRelativeTimeRange(String value) {
@@ -969,8 +1058,11 @@ public class WebSearchTool {
             }
 
             boolean entityMatched = matchesQueryIdentity(scrapeResult, options.queryTokens()) || isAuthoritative();
+            // boolean eventMatched = !options.signals().eventLike()
+            //         || containsAny((scrapeResult.title() + " " + scrapeResult.summary()).toLowerCase(Locale.ROOT), EVENT_SIGNAL_KEYWORDS);
+            // #NEW CODE#
             boolean eventMatched = !options.signals().eventLike()
-                    || containsAny((scrapeResult.title() + " " + scrapeResult.summary()).toLowerCase(Locale.ROOT), EVENT_SIGNAL_KEYWORDS);
+                    || containsAny((scrapeResult.title() + " " + scrapeResult.summary()).toLowerCase(Locale.ROOT), ALL_EVENT_SIGNAL_KEYWORDS);
             boolean dateMatched = !options.signals().timeSensitive()
                     || matchedDateHints.isEmpty()
                     || matchesRequestedTime(options.timeConstraint().requestedDateTokens());
@@ -996,7 +1088,9 @@ public class WebSearchTool {
             if (options.signals().eventLike() || options.signals().timeSensitive()) {
                 return "verified".equals(verificationStatus)
                         && !matchedDateHints.isEmpty()
-                        && containsAny((title + " " + content + " " + verificationSnippet).toLowerCase(Locale.ROOT), EVENT_SIGNAL_KEYWORDS);
+                        // && containsAny((title + " " + content + " " + verificationSnippet).toLowerCase(Locale.ROOT), EVENT_SIGNAL_KEYWORDS);
+                        // #NEW CODE#
+                        && containsAny((title + " " + content + " " + verificationSnippet).toLowerCase(Locale.ROOT), ALL_EVENT_SIGNAL_KEYWORDS);
             }
             return isAuthoritative() && ("verified".equals(verificationStatus) || "content_found".equals(verificationStatus));
         }

@@ -123,6 +123,78 @@ class WebSearchToolTest {
     }
 
     @Test
+    void shouldTreatWebinarRegistrationQueriesAsEventLike() {
+        List<String> requestBodies = new ArrayList<>();
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    requestBodies.add(requestBody);
+                    return tavilyResponse("OpenAI developer webinar registration",
+                            result("Developer Webinar Registration", "https://events.example.com/openai-webinar", "Register for the upcoming developer webinar.", 0.88));
+                });
+
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb("OpenAI developer webinar registration", null, null, null, null, false, 2));
+        JSONObject strategy = result.getJSONObject("strategy");
+        JSONObject firstRequest = JSONUtil.parseObj(requestBodies.get(0));
+
+        assertTrue(strategy.getBool("officialFirst"));
+        assertEquals("advanced", firstRequest.getStr("search_depth"));
+        assertTrue(firstRequest.getStr("query").toLowerCase().contains("official"));
+        assertTrue(firstRequest.getStr("query").toLowerCase().contains("events"));
+    }
+
+    @Test
+    void shouldTreatPressReleaseQueriesAsNewsLike() {
+        List<String> requestBodies = new ArrayList<>();
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    requestBodies.add(requestBody);
+                    return tavilyResponse("FDA press release diabetes guidance",
+                            result("FDA Press Release", "https://www.fda.gov/news-events/press-announcements/example", "FDA issued a press release about diabetes guidance.", 0.91));
+                });
+
+        tool.searchWeb("FDA press release diabetes guidance", null, null, null, null, false, 2);
+
+        JSONObject request = JSONUtil.parseObj(requestBodies.get(0));
+        assertEquals("news", request.getStr("topic"));
+        assertEquals("advanced", request.getStr("search_depth"));
+    }
+
+    @Test
+    void shouldTreatClinicQueriesAsInstitutionLike() {
+        List<String> requestBodies = new ArrayList<>();
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    requestBodies.add(requestBody);
+                    return tavilyResponse("Mayo clinic visiting hours",
+                            result("Visiting Hours", "https://www.mayoclinic.org/visitor-info", "Visitor information and hours.", 0.84));
+                });
+
+        JSONObject result = JSONUtil.parseObj(tool.searchWeb("Mayo clinic visiting hours", null, null, null, null, false, 2));
+        JSONObject strategy = result.getJSONObject("strategy");
+        JSONObject request = JSONUtil.parseObj(requestBodies.get(0));
+
+        assertTrue(strategy.getBool("officialFirst"));
+        assertEquals("advanced", request.getStr("search_depth"));
+        assertTrue(request.getStr("query").toLowerCase().contains("official"));
+    }
+
+    @Test
+    void shouldTreatDividendForecastQueriesAsFinanceLike() {
+        List<String> requestBodies = new ArrayList<>();
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> {
+                    requestBodies.add(requestBody);
+                    return tavilyResponse("Tesla dividend forecast",
+                            result("Tesla dividend forecast", "https://finance.example.com/tesla-forecast", "Analyst dividend forecast for Tesla.", 0.87));
+                });
+
+        tool.searchWeb("Tesla dividend forecast", null, null, null, null, false, 2);
+
+        JSONObject request = JSONUtil.parseObj(requestBodies.get(0));
+        assertEquals("finance", request.getStr("topic"));
+    }
+
+    @Test
     void shouldReturnErrorMessageWhenHttpClientThrowsException() {
         WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
                 (url, headers, requestBody) -> {
