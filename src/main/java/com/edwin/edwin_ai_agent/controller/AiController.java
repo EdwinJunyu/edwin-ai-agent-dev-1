@@ -1,5 +1,6 @@
 package com.edwin.edwin_ai_agent.controller;
 
+import com.edwin.edwin_ai_agent.agent.BaseAgent;
 import com.edwin.edwin_ai_agent.agent.EdwinManus;
 // import com.edwin.edwin_ai_agent.app.LoveApp;
 // #NEW CODE#
@@ -46,7 +47,15 @@ public class AiController {
                             }
                         },
                         emitter::completeWithError,
-                        emitter::complete);
+                        // emitter::complete);
+                        // #NEW CODE#
+                        () -> {
+                            try {
+                                BaseAgent.completeEmitterStream(emitter);
+                            } catch (IOException e) {
+                                emitter.completeWithError(e);
+                            }
+                        });
         return emitter;
     }
 

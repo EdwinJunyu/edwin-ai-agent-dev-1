@@ -3,6 +3,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { useRouter } from 'vue-router';
 import { createSessionId } from '../utils/id';
 import { openChatStream } from '../services/chat';
+import {
+  getTypingOperation,
+  isActiveStreamEvent,
+  parseStreamPayload,
+} from '../utils/streamLifecycle';
 
 const props = defineProps({
   title: {
@@ -59,9 +64,15 @@ const messageViewport = ref(null);
 const streamRef = ref(null);
 const chatId = ref('');
 const autoScrollEnabled = ref(true);
+
 let typingChain = Promise.resolve();
+let activeStreamKey = null;
+let streamSequence = 0;
+
 const TYPING_BATCH_DELAY = 96;
 const SCROLL_BOTTOM_THRESHOLD = 48;
+const DEFAULT_ASSISTANT_TITLE = '智能助手';
+const STREAM_ERROR_MESSAGE = '无法连接到后端服务';
 
 const themeClass = computed(() => `theme-${props.theme}`);
 
@@ -74,14 +85,50 @@ const resetChatId = () => {
   chatId.value = createSessionId('chat');
 };
 
-const closeStream = () => {
-  if (streamRef.value) {
-    streamRef.value.close();
-    streamRef.value = null;
+// const closeStream = () => {
+//   if (streamRef.value) {
+//     streamRef.value.close();
+//     streamRef.value = null;
+//   }
+//
+//   isStreaming.value = false;
+// };
+// #NEW CODE#
+const closeStreamConnection = (streamKey = activeStreamKey) => {
+  if (!streamRef.value) {
+    return;
+  }
+
+  if (streamKey && streamRef.value.__streamKey !== streamKey) {
+    return;
+  }
+
+  streamRef.value.close();
+  streamRef.value = null;
+};
+
+const finishStreamUi = (streamKey = activeStreamKey) => {
+  if (streamKey && !isActiveStreamEvent(activeStreamKey, streamKey)) {
+    return;
+  }
+
+  if (!streamKey || activeStreamKey === streamKey) {
+    activeStreamKey = null;
   }
 
   isStreaming.value = false;
 };
+
+const closeStream = () => {
+  closeStreamConnection();
+  finishStreamUi();
+};
+
+const createStreamState = () => ({
+  key: `stream-${++streamSequence}`,
+  terminated: false,
+  finalizing: false,
+});
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -124,7 +171,7 @@ const pushMessage = (role, content = '', extra = {}) => {
     content,
     timestamp: Date.now(),
     kind: extra.kind || 'plain',
-    title: extra.title || (role === 'user' ? '用户' : '智能助手'),
+    title: extra.title || (role === 'user' ? '用户' : DEFAULT_ASSISTANT_TITLE),
     step: extra.step ?? null,
   });
 
@@ -151,61 +198,186 @@ const applyQuickPrompt = async (prompt) => {
   await submitMessage();
 };
 
-const normalizeChunk = (chunk) => {
-  if (chunk === '[DONE]') {
-    return '';
+const terminateStream = (streamState, onFinalize) => {
+  if (streamState.finalizing) {
+    return;
   }
 
-  return chunk ?? '';
+  // Mark the stream as terminal before draining queued UI work so typing can fast-forward.
+  streamState.terminated = true;
+  streamState.finalizing = true;
+  closeStreamConnection(streamState.key);
+
+  typingChain = typingChain.then(async () => {
+    if (!isActiveStreamEvent(activeStreamKey, streamState.key)) {
+      return;
+    }
+
+    if (onFinalize) {
+      await onFinalize();
+    }
+
+    finishStreamUi(streamState.key);
+    await scrollToBottom(true);
+  });
 };
 
-const parseStructuredPayload = (raw) => {
-  const normalized = normalizeChunk(raw);
-
-  if (!normalized) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(normalized);
-    const payloadList = Array.isArray(parsed) ? parsed : [parsed];
-    const structuredItems = payloadList
-      .filter(
-        (item) =>
-          item &&
-          typeof item === 'object' &&
-          typeof item.kind === 'string' &&
-          typeof item.content === 'string',
-      )
-      .map((item) => ({
-        kind: item.kind,
-        title: item.title || '智能助手',
-        content: item.content,
-        step: item.step ?? null,
-      }));
-
-    return structuredItems.length > 0 ? structuredItems : null;
-  } catch {
-    return null;
-  }
-};
-
-const appendWithTyping = async (targetMessage, text) => {
-  const chars = Array.from(text);
+// const appendWithTyping = async (targetMessage, text) => {
+//   const chars = Array.from(text);
+//   let cursor = 0;
+//
+//   while (cursor < chars.length) {
+//     const batchSize = Math.min(getTypingBatchSize(), chars.length - cursor);
+//     targetMessage.content += chars.slice(cursor, cursor + batchSize).join('');
+//     cursor += batchSize;
+//     await scrollToBottom();
+//
+//     if (cursor < chars.length) {
+//       await sleep(TYPING_BATCH_DELAY);
+//     }
+//   }
+// };
+// #NEW CODE#
+const appendWithTyping = async (targetMessage, text, streamState) => {
   let cursor = 0;
 
-  while (cursor < chars.length) {
-    const batchSize = Math.min(getTypingBatchSize(), chars.length - cursor);
-    targetMessage.content += chars.slice(cursor, cursor + batchSize).join('');
-    cursor += batchSize;
+  while (true) {
+    if (!isActiveStreamEvent(activeStreamKey, streamState.key)) {
+      return;
+    }
+
+    const operation = getTypingOperation({
+      text,
+      cursor,
+      batchSize: getTypingBatchSize(),
+      terminated: streamState.terminated,
+    });
+
+    if (!operation.chunk) {
+      return;
+    }
+
+    targetMessage.content += operation.chunk;
+    cursor = operation.nextCursor;
     await scrollToBottom();
 
-    if (cursor < chars.length) {
-      await sleep(TYPING_BATCH_DELAY);
+    if (!operation.shouldDelay) {
+      return;
     }
+
+    await sleep(TYPING_BATCH_DELAY);
   }
 };
 
+// const submitMessage = async () => {
+//   const message = draft.value.trim();
+//
+//   if (!message || isStreaming.value) {
+//     return;
+//   }
+//
+//   draft.value = '';
+//   pushMessage('user', message);
+//
+//   const loadingMessage = pushMessage('assistant', '', {
+//     kind: 'loading',
+//     title: '智能助手',
+//   });
+//   autoScrollEnabled.value = true;
+//   await scrollToBottom(true);
+//
+//   isStreaming.value = true;
+//   typingChain = Promise.resolve();
+//
+//   const eventSource = openChatStream({
+//     path: props.endpointPath,
+//     message,
+//     chatId: props.requiresChatId ? chatId.value : undefined,
+//   });
+//
+//   streamRef.value = eventSource;
+//   let hasReceivedChunk = false;
+//   let streamMode = null;
+//   let hasStructuredBubble = false;
+//
+//   eventSource.onmessage = (event) => {
+//     const structuredItems = parseStructuredPayload(event.data);
+//
+//     if (structuredItems) {
+//       hasReceivedChunk = true;
+//       streamMode = 'structured';
+//
+//       typingChain = typingChain.then(async () => {
+//         for (const item of structuredItems) {
+//           const targetMessage = !hasStructuredBubble
+//             ? Object.assign(loadingMessage, {
+//                 kind: item.kind,
+//                 title: item.title,
+//                 step: item.step,
+//                 content: '',
+//                 timestamp: Date.now(),
+//               })
+//             : pushMessage('assistant', '', {
+//                 kind: item.kind,
+//                 title: item.title,
+//                 step: item.step,
+//               });
+//
+//           hasStructuredBubble = true;
+//           await appendWithTyping(targetMessage, item.content);
+//         }
+//       });
+//       return;
+//     }
+//
+//     const chunk = normalizeChunk(event.data);
+//     if (!chunk) {
+//       return;
+//     }
+//
+//     hasReceivedChunk = true;
+//
+//     if (!streamMode) {
+//       streamMode = 'plain';
+//       Object.assign(loadingMessage, {
+//         kind: 'plain',
+//         title: '智能助手',
+//         step: null,
+//         content: '',
+//         timestamp: Date.now(),
+//       });
+//     }
+//
+//     typingChain = typingChain.then(() => appendWithTyping(loadingMessage, chunk));
+//   };
+//
+//   eventSource.onerror = async () => {
+//     await typingChain;
+//
+//     const hasContent = loadingMessage.content.trim().length > 0 || hasReceivedChunk;
+//     const isClosed = eventSource.readyState === EventSource.CLOSED;
+//
+//     if (isClosed && hasReceivedChunk) {
+//       closeStream();
+//       await scrollToBottom();
+//       return;
+//     }
+//
+//     if (!hasContent) {
+//       Object.assign(loadingMessage, {
+//         kind: 'error',
+//         title: '智能助手',
+//         step: null,
+//         content: '无法连接到后端服务',
+//         timestamp: Date.now(),
+//       });
+//     }
+//
+//     closeStream();
+//     await scrollToBottom();
+//   };
+// };
+// #NEW CODE#
 const submitMessage = async () => {
   const message = draft.value.trim();
 
@@ -218,7 +390,7 @@ const submitMessage = async () => {
 
   const loadingMessage = pushMessage('assistant', '', {
     kind: 'loading',
-    title: '智能助手',
+    title: DEFAULT_ASSISTANT_TITLE,
   });
   autoScrollEnabled.value = true;
   await scrollToBottom(true);
@@ -231,21 +403,39 @@ const submitMessage = async () => {
     message,
     chatId: props.requiresChatId ? chatId.value : undefined,
   });
+  const streamState = createStreamState();
 
+  activeStreamKey = streamState.key;
+  eventSource.__streamKey = streamState.key;
   streamRef.value = eventSource;
+
   let hasReceivedChunk = false;
   let streamMode = null;
   let hasStructuredBubble = false;
 
   eventSource.onmessage = (event) => {
-    const structuredItems = parseStructuredPayload(event.data);
+    if (!isActiveStreamEvent(activeStreamKey, streamState.key) || streamState.finalizing) {
+      return;
+    }
 
-    if (structuredItems) {
-      hasReceivedChunk = true;
+    const payload = parseStreamPayload(event.data, loadingMessage.title);
+
+    if (payload.type === 'empty') {
+      return;
+    }
+
+    if (payload.type === 'done') {
+      terminateStream(streamState);
+      return;
+    }
+
+    hasReceivedChunk = true;
+
+    if (payload.type === 'structured') {
       streamMode = 'structured';
 
       typingChain = typingChain.then(async () => {
-        for (const item of structuredItems) {
+        for (const item of payload.items) {
           const targetMessage = !hasStructuredBubble
             ? Object.assign(loadingMessage, {
                 kind: item.kind,
@@ -261,57 +451,46 @@ const submitMessage = async () => {
               });
 
           hasStructuredBubble = true;
-          await appendWithTyping(targetMessage, item.content);
+          await appendWithTyping(targetMessage, item.content, streamState);
         }
       });
       return;
     }
 
-    const chunk = normalizeChunk(event.data);
-    if (!chunk) {
-      return;
-    }
-
-    hasReceivedChunk = true;
-
     if (!streamMode) {
       streamMode = 'plain';
       Object.assign(loadingMessage, {
         kind: 'plain',
-        title: '智能助手',
+        title: loadingMessage.title,
         step: null,
         content: '',
         timestamp: Date.now(),
       });
     }
 
-    typingChain = typingChain.then(() => appendWithTyping(loadingMessage, chunk));
+    typingChain = typingChain.then(() =>
+      appendWithTyping(loadingMessage, payload.text, streamState),
+    );
   };
 
-  eventSource.onerror = async () => {
-    await typingChain;
-
-    const hasContent = loadingMessage.content.trim().length > 0 || hasReceivedChunk;
-    const isClosed = eventSource.readyState === EventSource.CLOSED;
-
-    if (isClosed && hasReceivedChunk) {
-      closeStream();
-      await scrollToBottom();
+  eventSource.onerror = () => {
+    if (!isActiveStreamEvent(activeStreamKey, streamState.key) || streamState.finalizing) {
       return;
     }
 
-    if (!hasContent) {
-      Object.assign(loadingMessage, {
-        kind: 'error',
-        title: '智能助手',
-        step: null,
-        content: '无法连接到后端服务',
-        timestamp: Date.now(),
-      });
-    }
+    const hasContent = loadingMessage.content.trim().length > 0 || hasReceivedChunk;
 
-    closeStream();
-    await scrollToBottom();
+    terminateStream(streamState, async () => {
+      if (!hasContent) {
+        Object.assign(loadingMessage, {
+          kind: 'error',
+          title: loadingMessage.title,
+          step: null,
+          content: STREAM_ERROR_MESSAGE,
+          timestamp: Date.now(),
+        });
+      }
+    });
   };
 };
 

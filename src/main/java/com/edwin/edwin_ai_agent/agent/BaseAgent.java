@@ -1,55 +1,55 @@
 package com.edwin.edwin_ai_agent.agent;
 
-
 import cn.hutool.core.util.StrUtil;
-import com.edwin.edwin_ai_agent.advisor.MyLoggerAdvisor;
 import com.edwin.edwin_ai_agent.agent.model.AgentState;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 抽象基础代理类，用于管理代理状态和执行流程。
- *
- * 提供状态转换、内存管理和基于步骤的执行循环的基础功能。
- * 子类必须实现step方法。
+ * Base agent with state management, chat history, and step execution.
  */
 @Data
 @Slf4j
 public abstract class BaseAgent {
-    // 核心属性
-    private String name;
+    // Shared end marker lets the frontend stop EventSource before the browser retries.
+    public static final String STREAM_DONE_MARKER = "[DONE]";
 
-    // 提示
+    private String name;
     private String systemPrompt;
     private String nextStepPrompt;
-    // 状态
     private AgentState state = AgentState.IDLE;
-
-    // 执行控制
     private int maxSteps = 10;
     private int currentStep = 0;
-
-    // LLM
     private ChatClient chatClient;
-
-    // Memory（需要自主维护会话上下文）
     private List<Message> messageList = new ArrayList<>();
 
+    // Centralize SSE termination so every handled completion path emits the same done marker.
+    public static void completeEmitterStream(SseEmitter emitter, String payload) throws IOException {
+        if (StrUtil.isNotBlank(payload)) {
+            emitter.send(payload);
+        }
+        emitter.send(STREAM_DONE_MARKER);
+        emitter.complete();
+    }
+
+    public static void completeEmitterStream(SseEmitter emitter) throws IOException {
+        completeEmitterStream(emitter, null);
+    }
+
     /**
-     * 运行代理
+     * Run the agent synchronously.
      *
-     * @param userPrompt 用户提示词
-     * @return 执行结果
+     * @param userPrompt user input
+     * @return execution result
      */
     public String run(String userPrompt) {
         if (this.state != AgentState.IDLE) {
@@ -58,23 +58,22 @@ public abstract class BaseAgent {
         if (StrUtil.isBlank(userPrompt)) {
             throw new RuntimeException("Cannot run agent with empty user prompt");
         }
-        // 更改状态
+
         state = AgentState.RUNNING;
-        // 记录消息上下文
         messageList.add(new UserMessage(userPrompt));
-        // 保存结果列表
+
         List<String> results = new ArrayList<>();
         try {
-            for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
-                int stepNumber = i + 1;
+            for (int index = 0; index < maxSteps && state != AgentState.FINISHED; index++) {
+                int stepNumber = index + 1;
                 currentStep = stepNumber;
                 log.info("Executing step " + stepNumber + "/" + maxSteps);
-                // 单步执行
+
                 String stepResult = step();
                 String result = "Step " + stepNumber + ": " + stepResult;
                 results.add(result);
             }
-            // 检查是否超出步骤限制
+
             if (currentStep >= maxSteps) {
                 state = AgentState.FINISHED;
                 results.add("Terminated: Reached max steps (" + maxSteps + ")");
@@ -83,94 +82,98 @@ public abstract class BaseAgent {
         } catch (Exception e) {
             state = AgentState.ERROR;
             log.error("Error executing agent", e);
-            return "执行错误" + e.getMessage();
+            return "Execution error: " + e.getMessage();
         } finally {
-            // 清理资源
             this.cleanup();
         }
     }
 
     /**
-     * 执行单个步骤
+     * Execute one step.
      *
-     * @return 步骤执行结果
+     * @return step result
      */
     public abstract String step();
 
     /**
-     * 清理资源
+     * Cleanup hook.
      */
     protected void cleanup() {
-        // 子类可以重写此方法来清理资源
+        // Subclasses can override this hook when cleanup is needed.
     }
 
     /**
-     * 运行代理（流式输出）
+     * Run the agent with SSE streaming.
      *
-     * @param userPrompt 用户提示词
-     * @return SseEmitter实例
+     * @param userPrompt user input
+     * @return SSE emitter
      */
     public SseEmitter runStream(String userPrompt) {
-        // 创建SseEmitter，设置较长的超时时间
-        SseEmitter emitter = new SseEmitter(300000L); // 5分钟超时
+        SseEmitter emitter = new SseEmitter(300000L);
 
-        // 使用线程异步处理，避免阻塞主线程
         CompletableFuture.runAsync(() -> {
             try {
+                // if (this.state != AgentState.IDLE) {
+                //     emitter.send("Error: agent cannot run from state " + this.state);
+                //     emitter.complete();
+                //     return;
+                // }
+                // if (StrUtil.isBlank(userPrompt)) {
+                //     emitter.send("Error: empty prompt");
+                //     emitter.complete();
+                //     return;
+                // }
+                // #NEW CODE#
                 if (this.state != AgentState.IDLE) {
-                    emitter.send("错误：无法从状态运行代理: " + this.state);
-                    emitter.complete();
+                    completeEmitterStream(emitter, "Error: agent cannot run from state " + this.state);
                     return;
                 }
                 if (StrUtil.isBlank(userPrompt)) {
-                    emitter.send("错误：不能使用空提示词运行代理");
-                    emitter.complete();
+                    completeEmitterStream(emitter, "Error: empty prompt");
                     return;
                 }
 
-                // 更改状态
                 state = AgentState.RUNNING;
-                // 记录消息上下文
                 messageList.add(new UserMessage(userPrompt));
 
                 try {
-                    for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
-                        int stepNumber = i + 1;
+                    for (int index = 0; index < maxSteps && state != AgentState.FINISHED; index++) {
+                        int stepNumber = index + 1;
                         currentStep = stepNumber;
                         log.info("Executing step " + stepNumber + "/" + maxSteps);
 
-                        //// 单步执行
-                        //String stepResult = step();
-                        //String result = "Step " + stepNumber + ": " + stepResult;
-                        // 发送每一步的结果
-                        //emitter.send(result);
                         String stepResult = step();
 
-                        // 只把真正需要展示给前端的内容发出去，避免把内部步骤编号和空内容推到页面
+                        // Only forward visible payloads so the frontend does not render empty frames.
                         if (StrUtil.isNotBlank(stepResult)) {
                             emitter.send(stepResult);
                         }
-
-
                     }
-                    // 检查是否超出步骤限制
+
+                    // if (currentStep >= maxSteps) {
+                    //     state = AgentState.FINISHED;
+                    //     emitter.send("Execution finished: reached max steps (" + maxSteps + ")");
+                    // }
+                    // emitter.complete();
+                    // #NEW CODE#
                     if (currentStep >= maxSteps) {
                         state = AgentState.FINISHED;
-                        emitter.send("执行结束: 达到最大步骤 (" + maxSteps + ")");
+                        completeEmitterStream(emitter, "Execution finished: reached max steps (" + maxSteps + ")");
+                        return;
                     }
-                    // 正常完成
-                    emitter.complete();
+                    completeEmitterStream(emitter);
                 } catch (Exception e) {
                     state = AgentState.ERROR;
-                    log.error("执行智能体失败", e);
+                    log.error("Error executing agent", e);
                     try {
-                        emitter.send("执行错误: " + e.getMessage());
-                        emitter.complete();
+                        // emitter.send("Execution error: " + e.getMessage());
+                        // emitter.complete();
+                        // #NEW CODE#
+                        completeEmitterStream(emitter, "Execution error: " + e.getMessage());
                     } catch (Exception ex) {
                         emitter.completeWithError(ex);
                     }
                 } finally {
-                    // 清理资源
                     this.cleanup();
                 }
             } catch (Exception e) {
@@ -178,7 +181,6 @@ public abstract class BaseAgent {
             }
         });
 
-        // 设置超时和完成回调
         emitter.onTimeout(() -> {
             this.state = AgentState.ERROR;
             this.cleanup();
@@ -195,6 +197,4 @@ public abstract class BaseAgent {
 
         return emitter;
     }
-
 }
-
