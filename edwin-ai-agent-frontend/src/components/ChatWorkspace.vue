@@ -7,6 +7,7 @@ import {
   getTypingOperation,
   isActiveStreamEvent,
   parseStreamPayload,
+  shouldRenderStructuredPayloadImmediately,
 } from '../utils/streamLifecycle';
 
 const props = defineProps({
@@ -178,6 +179,21 @@ const pushMessage = (role, content = '', extra = {}) => {
   messages.value.push(message);
   return message;
 };
+
+const upsertStructuredBubble = (item, loadingMessage, hasStructuredBubble, initialContent = '') =>
+  !hasStructuredBubble
+    ? Object.assign(loadingMessage, {
+        kind: item.kind,
+        title: item.title,
+        step: item.step,
+        content: initialContent,
+        timestamp: Date.now(),
+      })
+    : pushMessage('assistant', initialContent, {
+        kind: item.kind,
+        title: item.title,
+        step: item.step,
+      });
 
 const startNewConversation = () => {
   closeStream();
@@ -434,24 +450,48 @@ const submitMessage = async () => {
     if (payload.type === 'structured') {
       streamMode = 'structured';
 
+      // typingChain = typingChain.then(async () => {
+      //   for (const item of payload.items) {
+      //     const targetMessage = !hasStructuredBubble
+      //       ? Object.assign(loadingMessage, {
+      //           kind: item.kind,
+      //           title: item.title,
+      //           step: item.step,
+      //           content: '',
+      //           timestamp: Date.now(),
+      //         })
+      //       : pushMessage('assistant', '', {
+      //           kind: item.kind,
+      //           title: item.title,
+      //           step: item.step,
+      //         });
+      //
+      //     hasStructuredBubble = true;
+      //     await appendWithTyping(targetMessage, item.content, streamState);
+      //   }
+      // });
+      // #NEW CODE#
+      const renderImmediately = shouldRenderStructuredPayloadImmediately(payload);
+
       typingChain = typingChain.then(async () => {
         for (const item of payload.items) {
-          const targetMessage = !hasStructuredBubble
-            ? Object.assign(loadingMessage, {
-                kind: item.kind,
-                title: item.title,
-                step: item.step,
-                content: '',
-                timestamp: Date.now(),
-              })
-            : pushMessage('assistant', '', {
-                kind: item.kind,
-                title: item.title,
-                step: item.step,
-              });
+          const initialContent = renderImmediately ? item.content : '';
+          const targetMessage = upsertStructuredBubble(
+            item,
+            loadingMessage,
+            hasStructuredBubble,
+            initialContent,
+          );
 
           hasStructuredBubble = true;
-          await appendWithTyping(targetMessage, item.content, streamState);
+
+          if (!renderImmediately) {
+            await appendWithTyping(targetMessage, item.content, streamState);
+          }
+        }
+
+        if (renderImmediately) {
+          await scrollToBottom(true);
         }
       });
       return;

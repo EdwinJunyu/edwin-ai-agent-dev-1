@@ -40,6 +40,15 @@ export const parseStreamPayload = (raw, fallbackTitle = 'AI Response') => {
   return { type: 'plain', text: normalized };
 };
 
+// Terminal structured payloads should be rendered immediately so a ready final answer does not wait behind the typing queue.
+export const shouldRenderStructuredPayloadImmediately = (payload) => {
+  if (!payload || payload.type !== 'structured') {
+    return false;
+  }
+
+  return payload.items.length > 1 || payload.items.some((item) => item.kind === 'final' || item.kind === 'error');
+};
+
 export const isActiveStreamEvent = (activeStreamKey, eventStreamKey) =>
   Boolean(activeStreamKey) && activeStreamKey === eventStreamKey;
 

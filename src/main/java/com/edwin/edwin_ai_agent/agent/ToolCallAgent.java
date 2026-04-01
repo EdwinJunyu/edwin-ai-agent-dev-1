@@ -370,9 +370,16 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     private String buildOngoingThoughtContent(String toolCallSummary, String toolResultSummary) {
+        // return mergeBlocks(
+        //         block("\u672c\u6b65\u5de5\u5177\u8c03\u7528", toolCallSummary),
+        //         block("\u672c\u6b65\u7ed3\u679c\u6458\u8981", toolResultSummary)
+        // );
+        // #NEW CODE#
+        // Add an explicit progress status so the user can see the agent is still consolidating evidence instead of hanging.
         return mergeBlocks(
                 block("\u672c\u6b65\u5de5\u5177\u8c03\u7528", toolCallSummary),
-                block("\u672c\u6b65\u7ed3\u679c\u6458\u8981", toolResultSummary)
+                block("\u672c\u6b65\u7ed3\u679c\u6458\u8981", toolResultSummary),
+                block("\u5f53\u524d\u72b6\u6001", buildOngoingStatusContent())
         );
     }
 
@@ -384,6 +391,10 @@ public class ToolCallAgent extends ReActAgent {
                 block("\u5b8c\u6210\u539f\u56e0", completionReason),
                 block("\u6700\u540e\u4e00\u6b21\u6709\u6548\u5de5\u5177\u7ed3\u679c\u6458\u8981", lastEffectiveToolResultSummary)
         );
+    }
+
+    private String buildOngoingStatusContent() {
+        return "\u672c\u6b65\u5de5\u5177\u5df2\u6267\u884c\u5b8c\u6210\uff0c\u6b63\u5728\u6839\u636e\u5f53\u524d\u8bc1\u636e\u5224\u65ad\u662f\u5426\u7ee7\u7eed\u68c0\u7d22\u6216\u76f4\u63a5\u6574\u7406\u6700\u7ec8\u56de\u590d\u3002";
     }
 
     private String buildFinalReply() {

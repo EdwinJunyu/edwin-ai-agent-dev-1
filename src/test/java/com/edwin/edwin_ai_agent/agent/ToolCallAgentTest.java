@@ -154,6 +154,7 @@ class ToolCallAgentTest {
         assertTrue(payload.contains("searchWeb(query="));
         assertTrue(payload.contains("Top hits"));
         assertFalse(payload.contains("I will search and then suggest the next step."));
+        assertTrue(payload.contains("\\u5f53\\u524d\\u72b6\\u6001") || payload.contains("当前状态"));
     }
 
     private ChatResponse chatResponse(String content, List<AssistantMessage.ToolCall> toolCalls) {

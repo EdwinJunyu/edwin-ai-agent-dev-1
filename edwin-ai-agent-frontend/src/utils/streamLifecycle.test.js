@@ -6,6 +6,7 @@ import {
   getTypingOperation,
   isActiveStreamEvent,
   parseStreamPayload,
+  shouldRenderStructuredPayloadImmediately,
 } from './streamLifecycle.js';
 
 test('parseStreamPayload marks the done frame as terminal', () => {
@@ -36,6 +37,40 @@ test('parseStreamPayload keeps structured bubbles intact', () => {
       step: 4,
     },
   ]);
+});
+
+test('shouldRenderStructuredPayloadImmediately fast-forwards final structured payloads', () => {
+  const payload = parseStreamPayload(
+    JSON.stringify([
+      {
+        kind: 'thought',
+        title: 'Thought',
+        content: 'done thinking',
+        step: 2,
+      },
+      {
+        kind: 'final',
+        title: 'Final',
+        content: 'ready to answer',
+        step: 2,
+      },
+    ]),
+  );
+
+  assert.equal(shouldRenderStructuredPayloadImmediately(payload), true);
+});
+
+test('shouldRenderStructuredPayloadImmediately keeps single non-terminal bubbles typed', () => {
+  const payload = parseStreamPayload(
+    JSON.stringify({
+      kind: 'thought',
+      title: 'Thought',
+      content: 'still working',
+      step: 1,
+    }),
+  );
+
+  assert.equal(shouldRenderStructuredPayloadImmediately(payload), false);
 });
 
 test('parseStreamPayload falls back to plain text when JSON is not a bubble payload', () => {
