@@ -41,10 +41,16 @@ import java.util.stream.Collectors;
 public class ToolCallAgent extends ReActAgent {
 
     static final String SEARCH_WEB_TOOL_NAME = "searchWeb";
+    static final String SCRAPE_WEB_PAGE_TOOL_NAME = "scrapeWebPage";
     static final String TERMINATE_TOOL_NAME = "doTerminate";
     static final int SEARCH_WEB_MAX_EXECUTIONS = 2;
     private static final int TOOL_RESULT_SUMMARY_LIMIT = 320;
     private static final int TOOL_ARGUMENT_SUMMARY_LIMIT = 160;
+    private static final String STATUS_SEARCHING = "\u6b63\u5728\u68c0\u7d22";
+    private static final String STATUS_VERIFYING = "\u6b63\u5728\u9a8c\u8bc1\u6765\u6e90";
+    // private static final String STATUS_DRAFTING = "\u6b63\u5728\u6574\u7406\u6700\u7ec8\u56de\u590d";
+    // #NEW CODE#
+    private static final String STATUS_DRAFTING = "\u6b63\u5728\u6574\u7406\u6700\u7ec8\u7b54\u590d";
 
     enum GuardAction {
         EXECUTE,
@@ -150,6 +156,7 @@ public class ToolCallAgent extends ReActAgent {
                 .anyMatch(response -> TERMINATE_TOOL_NAME.equals(response.name()));
 
         String toolResultSummary = summarizeToolResponses(toolResponseMessage.getResponses());
+        String ongoingStatusContent = resolveOngoingStatusContent(toolCalls, toolResponseMessage.getResponses());
         rememberExecutedToolBatch(toolCalls, toolResultSummary);
 
         if (terminateToolCalled) {
@@ -165,7 +172,7 @@ public class ToolCallAgent extends ReActAgent {
         }
 
         return buildPayload(
-                buildBubble("thought", "\u601d\u8003\u8fc7\u7a0b", buildOngoingThoughtContent(toolCallSummary, toolResultSummary))
+                buildBubble("thought", "\u601d\u8003\u8fc7\u7a0b", buildOngoingThoughtContent(toolCallSummary, toolResultSummary, ongoingStatusContent))
         );
     }
 
@@ -369,7 +376,7 @@ public class ToolCallAgent extends ReActAgent {
         return toolCalls == null ? List.of() : toolCalls;
     }
 
-    private String buildOngoingThoughtContent(String toolCallSummary, String toolResultSummary) {
+    private String buildOngoingThoughtContent(String toolCallSummary, String toolResultSummary, String ongoingStatusContent) {
         // return mergeBlocks(
         //         block("\u672c\u6b65\u5de5\u5177\u8c03\u7528", toolCallSummary),
         //         block("\u672c\u6b65\u7ed3\u679c\u6458\u8981", toolResultSummary)
@@ -379,7 +386,7 @@ public class ToolCallAgent extends ReActAgent {
         return mergeBlocks(
                 block("\u672c\u6b65\u5de5\u5177\u8c03\u7528", toolCallSummary),
                 block("\u672c\u6b65\u7ed3\u679c\u6458\u8981", toolResultSummary),
-                block("\u5f53\u524d\u72b6\u6001", buildOngoingStatusContent())
+                block("\u5f53\u524d\u72b6\u6001", ongoingStatusContent)
         );
     }
 
@@ -393,8 +400,102 @@ public class ToolCallAgent extends ReActAgent {
         );
     }
 
-    private String buildOngoingStatusContent() {
-        return "\u672c\u6b65\u5de5\u5177\u5df2\u6267\u884c\u5b8c\u6210\uff0c\u6b63\u5728\u6839\u636e\u5f53\u524d\u8bc1\u636e\u5224\u65ad\u662f\u5426\u7ee7\u7eed\u68c0\u7d22\u6216\u76f4\u63a5\u6574\u7406\u6700\u7ec8\u56de\u590d\u3002";
+    // Keep the status phase specific so the frontend shows whether the agent is still searching, verifying, or composing.
+    private String resolveOngoingStatusContent(
+            List<AssistantMessage.ToolCall> toolCalls,
+            List<ToolResponseMessage.ToolResponse> responses
+    ) {
+        if (containsToolCall(toolCalls, SEARCH_WEB_TOOL_NAME)) {
+            return resolveSearchWebStatusContent(responses);
+        }
+        if (containsToolCall(toolCalls, SCRAPE_WEB_PAGE_TOOL_NAME)) {
+            return buildStatusContent(
+                    STATUS_VERIFYING,
+                    "\u5df2\u83b7\u53d6\u5019\u9009\u9875\u9762\uff0c\u6b63\u5728\u68c0\u67e5\u5b83\u662f\u5426\u5c5e\u4e8e\u5b98\u65b9/\u6743\u5a01\u6765\u6e90\uff0c\u4ee5\u53ca\u4e0e\u95ee\u9898\u7684\u65f6\u95f4\u548c\u5b9e\u4f53\u662f\u5426\u5339\u914d\u3002"
+            );
+        }
+        return buildStatusContent(
+                STATUS_DRAFTING,
+                "\u5f53\u524d\u5de5\u5177\u7ed3\u679c\u5df2\u7ecf\u5230\u4f4d\uff0c\u6b63\u5728\u5408\u5e76\u6709\u6548\u8bc1\u636e\u5e76\u6574\u7406\u6210\u6700\u7ec8\u56de\u590d\u3002"
+        );
+    }
+
+    private String resolveSearchWebStatusContent(List<ToolResponseMessage.ToolResponse> responses) {
+        boolean hasSearchResults = false;
+        boolean hasAuthoritativeResult = false;
+        boolean hasVerifiedResult = false;
+        boolean hasContentFoundResult = false;
+        boolean needVerification = false;
+
+        for (ToolResponseMessage.ToolResponse response : responses) {
+            if (!SEARCH_WEB_TOOL_NAME.equals(response.name())) {
+                continue;
+            }
+            try {
+                JSONObject responseObject = JSONUtil.parseObj(response.responseData());
+                JSONObject strategyObject = responseObject.getJSONObject("strategy");
+                if (strategyObject != null) {
+                    needVerification = needVerification || Boolean.TRUE.equals(strategyObject.getBool("needVerification"));
+                }
+
+                JSONArray results = responseObject.getJSONArray("results");
+                if (results == null) {
+                    continue;
+                }
+
+                for (int index = 0; index < results.size(); index++) {
+                    JSONObject item = results.getJSONObject(index);
+                    if (item == null) {
+                        continue;
+                    }
+                    hasSearchResults = true;
+                    String sourceType = normalizeWhitespace(item.getStr("sourceType", ""));
+                    String verificationStatus = normalizeWhitespace(item.getStr("verificationStatus", ""));
+                    if ("official".equalsIgnoreCase(sourceType) || "authoritative".equalsIgnoreCase(sourceType)) {
+                        hasAuthoritativeResult = true;
+                    }
+                    if ("verified".equalsIgnoreCase(verificationStatus)) {
+                        hasVerifiedResult = true;
+                    }
+                    if ("content_found".equalsIgnoreCase(verificationStatus)) {
+                        hasContentFoundResult = true;
+                    }
+                }
+            } catch (Exception ignored) {
+                hasSearchResults = true;
+            }
+        }
+
+        if (hasVerifiedResult) {
+            return buildStatusContent(
+                    STATUS_DRAFTING,
+                    "\u5df2\u7ecf\u62ff\u5230\u901a\u8fc7\u6838\u9a8c\u7684\u6709\u6548\u8bc1\u636e\uff0c\u6b63\u5728\u5408\u5e76\u5173\u952e\u4fe1\u606f\u5e76\u6574\u7406\u6700\u7ec8\u56de\u590d\u3002"
+            );
+        }
+        if (hasAuthoritativeResult || hasContentFoundResult || needVerification) {
+            return buildStatusContent(
+                    STATUS_VERIFYING,
+                    "\u5df2\u627e\u5230\u5019\u9009\u7ed3\u679c\uff0c\u6b63\u5728\u786e\u8ba4\u5b83\u4eec\u662f\u5426\u5c5e\u4e8e\u5b98\u65b9/\u6743\u5a01\u6765\u6e90\uff0c\u5e76\u68c0\u67e5\u65f6\u95f4\u7ebf\u7d22\u662f\u5426\u7b26\u5408\u95ee\u9898\u8981\u6c42\u3002"
+            );
+        }
+        if (hasSearchResults) {
+            return buildStatusContent(
+                    STATUS_SEARCHING,
+                    "\u5df2\u5b8c\u6210\u4e00\u8f6e\u7f51\u9875\u68c0\u7d22\uff0c\u6b63\u5728\u7ee7\u7eed\u7b5b\u9009\u66f4\u76f8\u5173\u7684\u9875\u9762\u548c\u65f6\u95f4\u7ebf\u7d22\u3002"
+            );
+        }
+        return buildStatusContent(
+                STATUS_SEARCHING,
+                "\u6b63\u5728\u6536\u96c6\u5019\u9009\u7ed3\u679c\uff0c\u7a0d\u540e\u4f1a\u6839\u636e\u68c0\u7d22\u547d\u4e2d\u60c5\u51b5\u7ee7\u7eed\u7f29\u5c0f\u8303\u56f4\u3002"
+        );
+    }
+
+    private boolean containsToolCall(List<AssistantMessage.ToolCall> toolCalls, String toolName) {
+        return toolCalls.stream().anyMatch(toolCall -> toolName.equals(toolCall.name()));
+    }
+
+    private String buildStatusContent(String statusLabel, String description) {
+        return statusLabel + "\n" + description;
     }
 
     private String buildFinalReply() {

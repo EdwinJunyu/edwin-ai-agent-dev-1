@@ -1,3 +1,5 @@
+/* Previous implementation commented out per workspace rule. */
+// #NEW CODE#
 package com.edwin.edwin_ai_agent.agent;
 
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
@@ -14,6 +16,7 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
 
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -154,7 +157,47 @@ class ToolCallAgentTest {
         assertTrue(payload.contains("searchWeb(query="));
         assertTrue(payload.contains("Top hits"));
         assertFalse(payload.contains("I will search and then suggest the next step."));
-        assertTrue(payload.contains("\\u5f53\\u524d\\u72b6\\u6001") || payload.contains("当前状态"));
+        assertTrue(payload.contains("\u5f53\u524d\u72b6\u6001"));
+        assertTrue(payload.contains("\u6b63\u5728\u68c0\u7d22"));
+    }
+
+    @Test
+    void ongoingThoughtShowsVerificationStatusForAuthoritativeButUnverifiedSearchResults() {
+        when(callResponseSpec.chatResponse()).thenReturn(
+                chatResponse("I will verify the source next.", List.of(toolCall("searchWeb", "{\"query\":\"sfu april events official\"}")))
+        );
+        when(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .thenReturn(toolExecutionResult(toolResponse("searchWeb",
+                        searchResponseWithMetadata(
+                                "sfu april events official",
+                                "Official Events Page",
+                                "https://www.sfu.ca/events",
+                                "official",
+                                "content_found",
+                                true
+                        ))));
+
+        assertTrue(agent.think());
+        String payload = agent.act();
+
+        assertTrue(payload.contains("\u6b63\u5728\u9a8c\u8bc1\u6765\u6e90"));
+    }
+
+    @Test
+    void verifiedSearchResultsMapToDraftingStatus() throws Exception {
+        ToolResponseMessage.ToolResponse response = toolResponse("searchWeb",
+                searchResponseWithMetadata(
+                        "sfu april events official",
+                        "Official Events Page",
+                        "https://www.sfu.ca/events",
+                        "official",
+                        "verified",
+                        true
+                ));
+
+        String statusContent = invokeSearchStatusContent(List.of(response));
+
+        assertTrue(statusContent.contains("\u6b63\u5728\u6574\u7406\u6700\u7ec8\u7b54\u590d"));
     }
 
     private ChatResponse chatResponse(String content, List<AssistantMessage.ToolCall> toolCalls) {
@@ -197,5 +240,38 @@ class ToolCallAgentTest {
                   ]
                 }
                 """.formatted(query, title, url).trim();
+    }
+
+    private String searchResponseWithMetadata(
+            String query,
+            String title,
+            String url,
+            String sourceType,
+            String verificationStatus,
+            boolean needVerification
+    ) {
+        return """
+                {
+                  "query": "%s",
+                  "strategy": {
+                    "needVerification": %s
+                  },
+                  "results": [
+                    {
+                      "title": "%s",
+                      "url": "%s",
+                      "content": "sample",
+                      "sourceType": "%s",
+                      "verificationStatus": "%s"
+                    }
+                  ]
+                }
+                """.formatted(query, needVerification, title, url, sourceType, verificationStatus).trim();
+    }
+
+    private String invokeSearchStatusContent(List<ToolResponseMessage.ToolResponse> responses) throws Exception {
+        Method method = ToolCallAgent.class.getDeclaredMethod("resolveSearchWebStatusContent", List.class);
+        method.setAccessible(true);
+        return (String) method.invoke(agent, responses);
     }
 }
