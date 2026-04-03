@@ -1,4 +1,4 @@
-# Edwin AI Agent V2 项目 README
+# Edwin AI Agent 项目 README
 
 ## 1. 项目定位
 
@@ -6,18 +6,8 @@
 
 项目当前主要提供两类能力：
 
-1. `Edwin App`：偏“聊天应用”模式，支持普通对话、RAG、工具调用、MCP 与 SSE 流式输出。
+1. `Edwin App`：偏“聊天应用”模式，支持普通对话 与 SSE 流式输出。
 2. `EdwinManus`：偏“自主代理”模式，支持多步思考、工具调用、搜索验证、结构化状态回传与最终结论输出。
-
-本 README 以当前仓库代码为准，重点回答两件事：
-
-1. 各个文件的职能是什么。
-2. 各个模块代码整体在做什么。
-
-说明范围：
-
-- 本文逐项覆盖业务源码、配置、资源、测试和关键工程文件。
-- 不逐一展开 `node_modules/`、`target/`、`tmp/`、`.idea/` 这类依赖、缓存、构建产物和 IDE 元数据。
 
 ---
 
@@ -71,7 +61,7 @@ flowchart LR
 
 可以把项目理解为两条主链路：
 
-- `Edwin App`：更像常规 AI 聊天服务，强调会话、RAG、工具和流式输出。
+- `Edwin App`：为常规 AI 聊天服务 日常会话为主。
 - `EdwinManus`：更像代理执行器，强调“思考 -> 工具调用 -> 验证 -> 终止”的多步闭环。
 
 ---
@@ -153,7 +143,6 @@ Vite 会把 `/api` 代理到：
 - 普通聊天
 - 带会话记忆的聊天
 - 带 RAG 的问答
-- 工具增强问答
 - SSE 流式返回
 
 ### B. `EdwinManus` 链路
@@ -333,9 +322,6 @@ RAG 相关代码主要完成 4 件事：
 | `src/main/resources/application.yml` | 主配置文件，定义项目名、端口、上下文路径、OpenAPI/Knife4j、`tavily.api-key` 占位。 |
 | `src/main/resources/application-local.yml` | 本地环境配置，包含 DashScope 与 Tavily Key、端口和上下文路径等。 |
 | `src/main/resources/mcp-servers.json` | MCP Server 配置，声明 `edwin_ai_agent_imageSearchMCPServer` 的启动命令。 |
-| `src/main/resources/document/恋爱常见问题和回答 - 单身篇.md` | RAG 知识库文档之一。 |
-| `src/main/resources/document/恋爱常见问题和回答 - 恋爱篇.md` | RAG 知识库文档之一。 |
-| `src/main/resources/document/恋爱常见问题和回答 - 已婚篇.md` | RAG 知识库文档之一。 |
 | `src/main/resources/static/fonts/SourceHanSansCN-Regular.otf` | PDF 工具使用的中文正文字体。 |
 | `src/main/resources/static/fonts/SourceHanSansCN-Bold.ttf` | PDF 工具使用的中文粗体字体。 |
 | `src/main/resources/templates/` | 预留模板目录，目前未见实际业务模板。 |
@@ -526,91 +512,7 @@ RAG 相关代码主要完成 4 件事：
 
 这是项目里最有技术含量的一块。
 
-### 4. 项目仍保留明显的 LoveApp 历史痕迹
-
-虽然主应用名已切到 `EdwinApp`，但很多类、资源和测试仍保留 `LoveApp` 命名，这说明项目目前处于“从旧主题向通用 Agent 平台演进”的中间阶段。
-
----
-
-## 12. [NEEDS CLARIFICATION] 当前审阅中发现的疑点
-
-### [NEEDS CLARIFICATION] 1. Swagger 扫描包路径与实际代码包名不一致
-
-`application.yml` 中的：
-
-- `packages-to-scan: com.edwin.edwin_ai_agent_v2.controller`
-
-而实际控制器包名是：
-
-- `com.edwin.edwin_ai_agent.controller`
-
-这可能导致 OpenAPI 扫描不到当前控制器，建议核对。
-
-### [NEEDS CLARIFICATION] 2. 本地配置文件中出现了真实密钥
-
-`src/main/resources/application-local.yml` 当前包含真实样式的 DashScope / Tavily Key。  
-这类配置通常不应进入仓库，建议：
-
-- 立即轮换密钥
-- 改为环境变量或本地未提交配置
-
-### [NEEDS CLARIFICATION] 3. `LoveApp` 与 `EdwinApp` 命名尚未完全收敛
-
-当前仍存在以下历史命名：
-
-- `LoveAppDocumentLoader`
-- `LoveAppVectorStoreConfig`
-- `LoveAppRagCustomAdvisorFactory`
-- `LoveAppContextualQueryAugmenterFactory`
-- `src/main/resources/document/*.md`
-- 部分测试名和注释
-
-这不会阻止运行，但会提高理解成本。
-
-### [NEEDS CLARIFICATION] 4. 控制器测试与当前真实接口路径存在漂移
-
-当前控制器真实路径是：
-
-- `/ai/edwin_app/chat/sync`
-- `/ai/edwin_app/chat/sse/emitter`
-
-但 `AiControllerRenameSmokeTest` 仍在测试：
-
-- `/api/ai/love_app/chat/sync`
-- `/api/ai/love_app/chat/sse/emitter`
-
-这更像“旧路径兼容性测试”，但代码里未看到对应兼容映射，建议确认测试目标是否仍然成立。
-
-### [NEEDS CLARIFICATION] 5. `EdwinManusTest.java` 内部类名不是 `EdwinManusTest`
-
-文件名是：
-
-- `EdwinManusTest.java`
-
-但类名是：
-
-- `YuManusTest`
-
-这不影响编译，但会影响一致性与可读性。
-
-### [NEEDS CLARIFICATION] 6. 仓库中存在较多中文乱码/编码痕迹
-
-从当前源码可见，多处中文注释、字符串和 README 内容出现乱码痕迹。  
-这可能来自：
-
-- 文件编码不统一
-- 终端编码与文件编码不一致
-- 历史复制粘贴问题
-
-建议统一检查：
-
-- 源码文件编码
-- IDE 默认编码
-- Git 提交前编码规范
-
----
-
-## 13. 总结
+## 12. 总结
 
 这个项目目前已经具备比较清晰的三层结构：
 
