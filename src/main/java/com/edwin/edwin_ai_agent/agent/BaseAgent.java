@@ -45,6 +45,11 @@ public abstract class BaseAgent {
         completeEmitterStream(emitter, null);
     }
 
+    // History is seeded externally so multi-turn modes can restore prior user/assistant turns.
+    public void seedMessageHistory(List<Message> history) {
+        this.messageList = history == null ? new ArrayList<>() : new ArrayList<>(history);
+    }
+
     /**
      * Run the agent synchronously.
      *
@@ -78,6 +83,7 @@ public abstract class BaseAgent {
                 state = AgentState.FINISHED;
                 results.add("Terminated: Reached max steps (" + maxSteps + ")");
             }
+            safeAfterRunComplete(userPrompt);
             return String.join("\n", results);
         } catch (Exception e) {
             state = AgentState.ERROR;
@@ -102,6 +108,16 @@ public abstract class BaseAgent {
         // Subclasses can override this hook when cleanup is needed.
     }
 
+    protected void afterRunComplete(String userPrompt) {
+        // Subclasses can override this hook to persist user-visible conversation state.
+    }
+
+    protected void resetRunState() {
+        this.state = AgentState.IDLE;
+        this.currentStep = 0;
+        this.messageList = new ArrayList<>();
+    }
+
     /**
      * Run the agent with SSE streaming.
      *
@@ -113,16 +129,6 @@ public abstract class BaseAgent {
 
         CompletableFuture.runAsync(() -> {
             try {
-                // if (this.state != AgentState.IDLE) {
-                //     emitter.send("Error: agent cannot run from state " + this.state);
-                //     emitter.complete();
-                //     return;
-                // }
-                // if (StrUtil.isBlank(userPrompt)) {
-                //     emitter.send("Error: empty prompt");
-                //     emitter.complete();
-                //     return;
-                // }
                 // #NEW CODE#
                 if (this.state != AgentState.IDLE) {
                     completeEmitterStream(emitter, "Error: agent cannot run from state " + this.state);
@@ -150,25 +156,18 @@ public abstract class BaseAgent {
                         }
                     }
 
-                    // if (currentStep >= maxSteps) {
-                    //     state = AgentState.FINISHED;
-                    //     emitter.send("Execution finished: reached max steps (" + maxSteps + ")");
-                    // }
-                    // emitter.complete();
-                    // #NEW CODE#
                     if (currentStep >= maxSteps) {
                         state = AgentState.FINISHED;
+                        safeAfterRunComplete(userPrompt);
                         completeEmitterStream(emitter, "Execution finished: reached max steps (" + maxSteps + ")");
                         return;
                     }
+                    safeAfterRunComplete(userPrompt);
                     completeEmitterStream(emitter);
                 } catch (Exception e) {
                     state = AgentState.ERROR;
                     log.error("Error executing agent", e);
                     try {
-                        // emitter.send("Execution error: " + e.getMessage());
-                        // emitter.complete();
-                        // #NEW CODE#
                         completeEmitterStream(emitter, "Execution error: " + e.getMessage());
                     } catch (Exception ex) {
                         emitter.completeWithError(ex);
@@ -196,5 +195,13 @@ public abstract class BaseAgent {
         });
 
         return emitter;
+    }
+
+    private void safeAfterRunComplete(String userPrompt) {
+        try {
+            afterRunComplete(userPrompt);
+        } catch (Exception e) {
+            log.warn("Post-run completion hook failed", e);
+        }
     }
 }

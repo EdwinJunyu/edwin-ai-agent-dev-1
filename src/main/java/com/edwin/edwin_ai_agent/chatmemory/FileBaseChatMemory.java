@@ -16,6 +16,8 @@ import java.util.List;
 
 public class FileBaseChatMemory implements ChatMemory {
     private final String BASE_DIR;
+    // #NEW CODE#
+    private final int historyWindow;
     private static final Kryo kryo = new Kryo();
 
     static {
@@ -25,10 +27,24 @@ public class FileBaseChatMemory implements ChatMemory {
     }
 
     //构造对象时，指定文件保存目录
-    public FileBaseChatMemory(String dir){
+    // public FileBaseChatMemory(String dir){
+    //     this.BASE_DIR = dir;
+    //     File baseDir = new File(dir);
+    //     if (!baseDir.exists()){
+    //         baseDir.mkdir();
+    //     }
+    // }
+    // #NEW CODE#
+    public FileBaseChatMemory(String dir) {
+        this(dir, 3);
+    }
+
+    // Allow different callers to keep different memory windows without changing storage format.
+    public FileBaseChatMemory(String dir, int historyWindow) {
         this.BASE_DIR = dir;
+        this.historyWindow = Math.max(1, historyWindow);
         File baseDir = new File(dir);
-        if (!baseDir.exists()){
+        if (!baseDir.exists()) {
             baseDir.mkdir();
         }
     }
@@ -48,8 +64,12 @@ public class FileBaseChatMemory implements ChatMemory {
     @Override
     public List<Message> get(String conversationId) {  //注意旧版本会多一个lastN参数
         List<Message> messagesList = getOrCreateConversation(conversationId);
+        // return messagesList.stream()
+        //         .skip(Math.max(0,messagesList.size() - 3))
+        //         .toList();
+        // #NEW CODE#
         return messagesList.stream()
-                .skip(Math.max(0,messagesList.size() - 3))
+                .skip(Math.max(0, messagesList.size() - historyWindow))
                 .toList();
     }
 

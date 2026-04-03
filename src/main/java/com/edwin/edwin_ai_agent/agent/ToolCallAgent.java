@@ -184,6 +184,9 @@ public class ToolCallAgent extends ReActAgent {
             String finalReply = blockedByEvidenceThreshold
                     ? buildEvidenceThresholdFallback(searchEvidenceDecision.reason())
                     : (StringUtils.hasText(assistantText) ? assistantText : buildFallbackFinalReply(lastCompletionReason));
+            // #NEW CODE#
+            // Persist the exact final bubble text rather than the raw model draft.
+            lastAssistantText = finalReply;
             return buildPayload(
                     buildBubble("thought", "\u601d\u8003\u8fc7\u7a0b", buildFinalThoughtContent()),
                     buildBubble("final", "\u6700\u7ec8\u56de\u590d", finalReply)
@@ -211,6 +214,7 @@ public class ToolCallAgent extends ReActAgent {
         lastSearchEvidenceThresholdMet = true;
         lastSearchEvidenceReason = "";
         toolExecutionCounts.clear();
+        resetRunState();
     }
 
     boolean shouldInjectNextStepPrompt() {
@@ -555,10 +559,12 @@ public class ToolCallAgent extends ReActAgent {
         return buildFallbackFinalReply(lastCompletionReason);
     }
 
+    protected String getFinalReplyForPersistence() {
+        return buildFinalReply();
+    }
+
     private String buildFallbackFinalReply(String reason) {
         if (StringUtils.hasText(lastEffectiveToolResultSummary)) {
-            // return "Here is the conclusion based on the effective tool output so far:\n" + lastEffectiveToolResultSummary;
-            // #NEW CODE#
             return "\u4ee5\u4e0b\u662f\u57fa\u4e8e\u76ee\u524d\u6709\u6548\u5de5\u5177\u8f93\u51fa\u7684\u7ed3\u8bba\uff1a\n" + lastEffectiveToolResultSummary;
         }
         if (StringUtils.hasText(reason)) {

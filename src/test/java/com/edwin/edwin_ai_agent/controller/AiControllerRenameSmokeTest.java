@@ -1,12 +1,11 @@
 package com.edwin.edwin_ai_agent.controller;
 
 import com.edwin.edwin_ai_agent.app.EdwinApp;
+import com.edwin.edwin_ai_agent.app.ManusApp;
 import com.edwin.edwin_ai_agent.config.ResponseLength;
 import com.edwin.edwin_ai_agent.config.ResponseLengthStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -26,16 +25,20 @@ class AiControllerRenameSmokeTest {
 
     private MockMvc mockMvc;
     private EdwinApp edwinApp;
+    private ManusApp manusApp;
 
     @BeforeEach
     void setUp() {
         AiController controller = new AiController();
         edwinApp = mock(EdwinApp.class);
+        manusApp = mock(ManusApp.class);
 
         // Wire fields by name so the test matches the @Resource injection contract.
         ReflectionTestUtils.setField(controller, "edwinApp", edwinApp);
-        ReflectionTestUtils.setField(controller, "allTools", new ToolCallback[0]);
-        ReflectionTestUtils.setField(controller, "dashscopeChatModel", mock(ChatModel.class));
+        // ReflectionTestUtils.setField(controller, "allTools", new ToolCallback[0]);
+        // ReflectionTestUtils.setField(controller, "dashscopeChatModel", mock(ChatModel.class));
+        // #NEW CODE#
+        ReflectionTestUtils.setField(controller, "manusApp", manusApp);
         ReflectionTestUtils.setField(controller, "responseLengthStrategy", new ResponseLengthStrategy());
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();

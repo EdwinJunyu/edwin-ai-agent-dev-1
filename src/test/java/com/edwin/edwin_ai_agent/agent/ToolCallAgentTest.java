@@ -3,6 +3,7 @@
 package com.edwin.edwin_ai_agent.agent;
 
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
+import com.edwin.edwin_ai_agent.agent.model.AgentState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -267,6 +268,21 @@ class ToolCallAgentTest {
         assertTrue(agent.getLastCompletionReason().contains("\u5f53\u524d\u68c0\u7d22\u7ed3\u679c\u8fd8\u4e0d\u8db3\u4ee5"));
         assertTrue(agent.getLastAssistantText().contains("\u5f53\u524d\u8bc1\u636e\u8fd8\u4e0d\u8db3\u4ee5\u652f\u6301\u7cbe\u786e\u7ed3\u8bba"));
         assertTrue(agent.getLastAssistantText().contains("\u4e0d\u4f1a\u8f93\u51fa\u672a\u88ab\u5de5\u5177\u8bc1\u636e\u652f\u6301\u7684\u5177\u4f53\u6570\u636e\u6216\u5217\u8868"));
+    }
+
+    @Test
+    void cleanupResetsStateAndConversationHistory() {
+        agent.setState(AgentState.RUNNING);
+        agent.setCurrentStep(3);
+        agent.getMessageList().add(new AssistantMessage("partial reply"));
+        agent.getToolExecutionCounts().put("searchWeb", 2);
+
+        agent.cleanup();
+
+        assertEquals(AgentState.IDLE, agent.getState());
+        assertEquals(0, agent.getCurrentStep());
+        assertTrue(agent.getMessageList().isEmpty());
+        assertTrue(agent.getToolExecutionCounts().isEmpty());
     }
 
     private ChatResponse chatResponse(String content, List<AssistantMessage.ToolCall> toolCalls) {

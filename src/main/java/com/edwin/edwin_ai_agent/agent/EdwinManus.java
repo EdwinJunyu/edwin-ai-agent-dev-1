@@ -3,14 +3,18 @@
 package com.edwin.edwin_ai_agent.agent;
 
 import com.edwin.edwin_ai_agent.advisor.MyLoggerAdvisor;
+import com.edwin.edwin_ai_agent.chatmemory.ManusConversationMemory;
 import com.edwin.edwin_ai_agent.config.ResponseLength;
 import com.edwin.edwin_ai_agent.config.ResponseLengthStrategy;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 public class EdwinManus extends ToolCallAgent {
@@ -42,20 +46,9 @@ public class EdwinManus extends ToolCallAgent {
             Unless the user explicitly asks, do not proactively suggest extra next steps.
             """;
 
-    // public EdwinManus(ToolCallback[] allTools, ChatModel dashscopeChatModel) {
-    //     super(allTools);
-    //     this.setName("EdwinManus");
-    //     this.setSystemPrompt(SYSTEM_PROMPT);
-    //     this.setNextStepPrompt(NEXT_STEP_PROMPT);
-    //     this.setMaxSteps(8);
-    //
-    //     // Keep the existing advisor chain so request/response logging behavior does not change.
-    //     ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
-    //             .defaultAdvisors(new MyLoggerAdvisor())
-    //             .build();
-    //     this.setChatClient(chatClient);
-    // }
-    // #NEW CODE#
+    private String memoryConversationId = "";
+    private ManusConversationMemory conversationMemory;
+
     @Autowired
     public EdwinManus(
             ToolCallback[] allTools,
@@ -91,5 +84,35 @@ public class EdwinManus extends ToolCallAgent {
                 .defaultAdvisors(new MyLoggerAdvisor())
                 .build();
         this.setChatClient(chatClient);
+    }
+
+    public void seedConversationHistory(List<Message> history) {
+        seedMessageHistory(history);
+    }
+
+    public void bindConversationMemory(String chatId, ManusConversationMemory conversationMemory) {
+        this.memoryConversationId = chatId;
+        this.conversationMemory = conversationMemory;
+    }
+
+    @Override
+    protected void afterRunComplete(String userPrompt) {
+        if (!StringUtils.hasText(memoryConversationId) || conversationMemory == null) {
+            return;
+        }
+
+        // Only persist the final user-visible answer so the next turn keeps clean dialogue context.
+        String assistantReply = getFinalReplyForPersistence();
+        if (!StringUtils.hasText(assistantReply)) {
+            return;
+        }
+        conversationMemory.appendTurn(memoryConversationId, userPrompt, assistantReply);
+    }
+
+    @Override
+    protected void cleanup() {
+        super.cleanup();
+        memoryConversationId = "";
+        conversationMemory = null;
     }
 }
