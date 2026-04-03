@@ -2,13 +2,13 @@ package com.edwin.edwin_ai_agent.app;
 
 import com.edwin.edwin_ai_agent.advisor.MyLoggerAdvisor;
 import com.edwin.edwin_ai_agent.chatmemory.FileBaseChatMemory;
+import com.edwin.edwin_ai_agent.config.ResponseLength;
+import com.edwin.edwin_ai_agent.config.ResponseLengthStrategy;
 import com.edwin.edwin_ai_agent.rag.QueryRewriter;
 import jakarta.annotation.Resource;
 import java.util.List;
 
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
@@ -28,6 +28,7 @@ import reactor.core.publisher.Flux;
 public class EdwinApp {
 
     private final ChatClient chatClient;
+    private final ResponseLengthStrategy responseLengthStrategy;
     private static final String SYSTEM_PROMPT = "扮演聊天大师，回答语言精简，适当倾听";
     // private static final Logger log = LoggerFactory.getLogger(LoveApp.class);
     // #NEW CODE#
@@ -48,9 +49,22 @@ public class EdwinApp {
     // =========================
     // 基于文件的对话记忆（启用）
     // =========================
-    public EdwinApp(ChatModel dashscopeChatModel) {
+    // public EdwinApp(ChatModel dashscopeChatModel) {
+    //     String fileDir = System.getProperty("user.dir") + "/tmp/chat-memory";
+    //     ChatMemory chatMemory = new FileBaseChatMemory(fileDir);
+    //     chatClient = ChatClient.builder(dashscopeChatModel)
+    //             .defaultSystem(SYSTEM_PROMPT)
+    //             .defaultAdvisors(
+    //                     MessageChatMemoryAdvisor.builder(chatMemory)
+    //                             .order(0)
+    //                             .build())
+    //             .build();
+    // }
+    // #NEW CODE#
+    public EdwinApp(ChatModel dashscopeChatModel, ResponseLengthStrategy responseLengthStrategy) {
         String fileDir = System.getProperty("user.dir") + "/tmp/chat-memory";
         ChatMemory chatMemory = new FileBaseChatMemory(fileDir);
+        this.responseLengthStrategy = responseLengthStrategy;
         chatClient = ChatClient.builder(dashscopeChatModel)
                 .defaultSystem(SYSTEM_PROMPT)
                 .defaultAdvisors(
@@ -61,11 +75,24 @@ public class EdwinApp {
     }
 
     //AI 基础对话（支持多轮对话记忆）
+    // public String doChat(String message, String chatId) {
+    //     String content = chatClient
+    //             .prompt()
+    //             .user(message)
+    //             .advisors(advisorSpec -> advisorSpec.param(ChatMemory.CONVERSATION_ID, chatId))
+    //             .call()
+    //             .content();
+    //     log.info("content: {}", content);
+    //     return content;
+    // }
+    // #NEW CODE#
     public String doChat(String message, String chatId) {
-        String content = chatClient
-                .prompt()
-                .user(message)
-                .advisors(advisorSpec -> advisorSpec.param(ChatMemory.CONVERSATION_ID, chatId))
+        return doChat(message, chatId, ResponseLength.MEDIUM);
+    }
+
+    // 统一复用请求构建逻辑，保证同步与流式回答遵守同一套长度提示和 token 预算。
+    public String doChat(String message, String chatId, ResponseLength responseLength) {
+        String content = buildLengthAwareRequest(message, chatId, responseLength)
                 .call()
                 .content();
         log.info("content: {}", content);
@@ -141,13 +168,38 @@ public class EdwinApp {
     }
 
     // AI 基础对话 SSE 流式传输
+    // public Flux<String> doChatByStream(String message, String chatId) {
+    //     return chatClient
+    //             .prompt()
+    //             .user(message)
+    //             .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId)
+    //                     .param(VectorStoreChatMemoryAdvisor.TOP_K, 10))
+    //             .stream()
+    //             .content();
+    // }
+    // #NEW CODE#
     public Flux<String> doChatByStream(String message, String chatId) {
-        return chatClient
-                .prompt()
-                .user(message)
-                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId)
-                        .param(VectorStoreChatMemoryAdvisor.TOP_K, 10))
+        return doChatByStream(message, chatId, ResponseLength.MEDIUM);
+    }
+
+    public Flux<String> doChatByStream(String message, String chatId, ResponseLength responseLength) {
+        return buildLengthAwareRequest(message, chatId, responseLength)
                 .stream()
                 .content();
+    }
+
+    private ChatClient.ChatClientRequestSpec buildLengthAwareRequest(
+            String message,
+            String chatId,
+            ResponseLength responseLength
+    ) {
+        ResponseLength resolvedLength = responseLength == null ? ResponseLength.MEDIUM : responseLength;
+        return chatClient
+                .prompt()
+                .system(responseLengthStrategy.appendSystemPrompt(SYSTEM_PROMPT, resolvedLength))
+                .options(responseLengthStrategy.buildEdwinAppOptions(resolvedLength))
+                .user(message)
+                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId)
+                        .param(VectorStoreChatMemoryAdvisor.TOP_K, 10));
     }
 }

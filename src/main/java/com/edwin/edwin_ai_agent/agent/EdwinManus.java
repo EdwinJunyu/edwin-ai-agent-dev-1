@@ -3,8 +3,12 @@
 package com.edwin.edwin_ai_agent.agent;
 
 import com.edwin.edwin_ai_agent.advisor.MyLoggerAdvisor;
+import com.edwin.edwin_ai_agent.config.ResponseLength;
+import com.edwin.edwin_ai_agent.config.ResponseLengthStrategy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -38,11 +42,48 @@ public class EdwinManus extends ToolCallAgent {
             Unless the user explicitly asks, do not proactively suggest extra next steps.
             """;
 
+    // public EdwinManus(ToolCallback[] allTools, ChatModel dashscopeChatModel) {
+    //     super(allTools);
+    //     this.setName("EdwinManus");
+    //     this.setSystemPrompt(SYSTEM_PROMPT);
+    //     this.setNextStepPrompt(NEXT_STEP_PROMPT);
+    //     this.setMaxSteps(8);
+    //
+    //     // Keep the existing advisor chain so request/response logging behavior does not change.
+    //     ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
+    //             .defaultAdvisors(new MyLoggerAdvisor())
+    //             .build();
+    //     this.setChatClient(chatClient);
+    // }
+    // #NEW CODE#
+    @Autowired
+    public EdwinManus(
+            ToolCallback[] allTools,
+            ChatModel dashscopeChatModel,
+            ResponseLengthStrategy responseLengthStrategy
+    ) {
+        this(allTools, dashscopeChatModel, responseLengthStrategy, ResponseLength.MEDIUM);
+    }
+
     public EdwinManus(ToolCallback[] allTools, ChatModel dashscopeChatModel) {
-        super(allTools);
+        this(allTools, dashscopeChatModel, new ResponseLengthStrategy(), ResponseLength.MEDIUM);
+    }
+
+    // Key prompt and token settings are derived from one shared mode so the answer size stays predictable.
+    public EdwinManus(
+            ToolCallback[] allTools,
+            ChatModel dashscopeChatModel,
+            ResponseLengthStrategy responseLengthStrategy,
+            ResponseLength responseLength
+    ) {
+        super(
+                allTools,
+                ToolCallingManager.builder().build(),
+                responseLengthStrategy.buildManusOptions(responseLength)
+        );
         this.setName("EdwinManus");
-        this.setSystemPrompt(SYSTEM_PROMPT);
-        this.setNextStepPrompt(NEXT_STEP_PROMPT);
+        this.setSystemPrompt(responseLengthStrategy.appendSystemPrompt(SYSTEM_PROMPT, responseLength));
+        this.setNextStepPrompt(responseLengthStrategy.appendPlannerPrompt(NEXT_STEP_PROMPT, responseLength));
         this.setMaxSteps(8);
 
         // Keep the existing advisor chain so request/response logging behavior does not change.

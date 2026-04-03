@@ -6,7 +6,9 @@ import cn.hutool.json.JSONUtil;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -254,6 +256,43 @@ class WebSearchToolTest {
     }
 
     @Test
+    void shouldReuseUnifiedDateParsingForRangesAndFingerprints() throws Exception {
+        WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
+                (url, headers, requestBody) -> tavilyResponse("unused"));
+        Method parseDateRange = WebSearchTool.class.getDeclaredMethod("parseDateRange", String.class);
+        parseDateRange.setAccessible(true);
+        Method normalizeDateFingerprint = WebSearchTool.class.getDeclaredMethod("normalizeDateFingerprint", String.class);
+        normalizeDateFingerprint.setAccessible(true);
+        Method matchesRequestedTimeHints = WebSearchTool.class.getDeclaredMethod("matchesRequestedTimeHints", java.util.Set.class, List.class);
+        matchesRequestedTimeHints.setAccessible(true);
+
+        Object aprilRange = parseDateRange.invoke(tool, "2026-04");
+        Object marchRange = parseDateRange.invoke(tool, "March 2026");
+        Object yearRange = parseDateRange.invoke(tool, "2026");
+
+        assertEquals("2026-04-01", invokeRecordAccessor(aprilRange, "startDate"));
+        assertEquals("2026-04-30", invokeRecordAccessor(aprilRange, "endDate"));
+        assertEquals("2026-03-01", invokeRecordAccessor(marchRange, "startDate"));
+        assertEquals("2026-03-31", invokeRecordAccessor(marchRange, "endDate"));
+        assertEquals("2026-01-01", invokeRecordAccessor(yearRange, "startDate"));
+        assertEquals("2026-12-31", invokeRecordAccessor(yearRange, "endDate"));
+
+        assertEquals("2026-04", normalizeDateFingerprint.invoke(null, "2026-04"));
+        assertEquals("2026-03", normalizeDateFingerprint.invoke(null, "March 2026"));
+        assertEquals("2026", normalizeDateFingerprint.invoke(null, "2026"));
+
+        assertTrue((Boolean) matchesRequestedTimeHints.invoke(null,
+                new LinkedHashSet<>(List.of("March 15, 2026")),
+                List.of("2026-03")));
+        assertTrue((Boolean) matchesRequestedTimeHints.invoke(null,
+                new LinkedHashSet<>(List.of("March 15, 2026")),
+                List.of("2026")));
+        assertFalse((Boolean) matchesRequestedTimeHints.invoke(null,
+                new LinkedHashSet<>(List.of("March 15, 2026")),
+                List.of("2027-04")));
+    }
+
+    @Test
     void shouldReturnErrorMessageWhenHttpClientThrowsException() {
         WebSearchTool tool = new WebSearchTool("test-key", new WebScrapingTool(url -> Jsoup.parse("<html></html>", url)),
                 (url, headers, requestBody) -> {
@@ -281,5 +320,11 @@ class WebSearchToolTest {
                 .set("url", url)
                 .set("content", content)
                 .set("score", score);
+    }
+
+    private Object invokeRecordAccessor(Object target, String accessorName) throws Exception {
+        Method accessor = target.getClass().getDeclaredMethod(accessorName);
+        accessor.setAccessible(true);
+        return accessor.invoke(target);
     }
 }

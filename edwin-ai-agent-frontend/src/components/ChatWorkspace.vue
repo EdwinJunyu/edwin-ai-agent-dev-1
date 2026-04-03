@@ -74,8 +74,14 @@ const TYPING_BATCH_DELAY = 96;
 const SCROLL_BOTTOM_THRESHOLD = 48;
 const DEFAULT_ASSISTANT_TITLE = '智能助手';
 const STREAM_ERROR_MESSAGE = '无法连接到后端服务';
+const RESPONSE_LENGTH_OPTIONS = [
+  { value: 'short', label: '简短' },
+  { value: 'medium', label: '标准' },
+  { value: 'long', label: '详细' },
+];
 
 const themeClass = computed(() => `theme-${props.theme}`);
+const responseLength = ref('medium');
 
 const resetChatId = () => {
   if (!props.requiresChatId) {
@@ -414,10 +420,17 @@ const submitMessage = async () => {
   isStreaming.value = true;
   typingChain = Promise.resolve();
 
+  // const eventSource = openChatStream({
+  //   path: props.endpointPath,
+  //   message,
+  //   chatId: props.requiresChatId ? chatId.value : undefined,
+  // });
+  // #NEW CODE#
   const eventSource = openChatStream({
     path: props.endpointPath,
     message,
     chatId: props.requiresChatId ? chatId.value : undefined,
+    responseLength: responseLength.value,
   });
   const streamState = createStreamState();
 
@@ -636,9 +649,39 @@ onBeforeUnmount(() => {
             @keydown="onComposerKeydown"
           ></textarea>
 
-          <div class="composer-footer">
+          <!-- <div class="composer-footer">
             <div class="status-text">
               {{ isStreaming ? '正在推送消息 请稍候' : 'Enter 发送，Shift + Enter 换行' }}
+            </div>
+
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="!draft.trim() || isStreaming"
+              @click="submitMessage"
+            >
+              {{ isStreaming ? '生成中...' : '发送消息' }}
+            </button>
+          </div> -->
+          <!-- #NEW CODE# -->
+          <div class="composer-footer">
+            <div class="composer-meta">
+              <div class="status-text">
+                {{ isStreaming ? '正在推送消息 请稍候' : 'Enter 发送，Shift + Enter 换行' }}
+              </div>
+
+              <label class="length-control">
+                <span>输出长度</span>
+                <select v-model="responseLength" :disabled="isStreaming">
+                  <option
+                    v-for="option in RESPONSE_LENGTH_OPTIONS"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
             </div>
 
             <button
@@ -1087,7 +1130,7 @@ onBeforeUnmount(() => {
   background: rgba(247, 249, 252, 0.88);
 }
 
-.composer-footer {
+/* .composer-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1097,6 +1140,51 @@ onBeforeUnmount(() => {
 .status-text {
   color: #60708c;
   font-size: 0.92rem;
+} */
+/* #NEW CODE# */
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.status-text {
+  color: #60708c;
+  font-size: 0.92rem;
+}
+
+.length-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(18, 31, 54, 0.04);
+  border: 1px solid rgba(34, 49, 78, 0.08);
+  color: #40506d;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.length-control select {
+  border: none;
+  background: transparent;
+  color: #1f2d45;
+  font: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.length-control select:disabled {
+  cursor: wait;
 }
 
 @media (max-width: 960px) {
@@ -1140,7 +1228,13 @@ onBeforeUnmount(() => {
     border-radius: 24px;
   }
 
-  .composer-footer {
+  /* .composer-footer {
+    flex-direction: column;
+    align-items: stretch;
+  } */
+  /* #NEW CODE# */
+  .composer-footer,
+  .composer-meta {
     flex-direction: column;
     align-items: stretch;
   }
